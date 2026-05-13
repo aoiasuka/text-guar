@@ -1,0 +1,108 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           Int            @id @default(autoincrement())
+  username     String         @unique @db.VarChar(50)
+  passwordHash String         @map("password_hash") @db.VarChar(255)
+  role         Role           @default(editor)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  contents     Content[]
+  reviews      Review[]
+  logs         OperationLog[]
+
+  @@map("users")
+}
+
+enum Role {
+  admin
+  editor
+}
+
+model Content {
+  id              Int           @id @default(autoincrement())
+  title           String        @db.VarChar(200)
+  body            String        @db.Text
+  filteredBody    String        @map("filtered_body") @db.Text
+  category        String        @default("") @db.VarChar(50)
+  status          ContentStatus @default(draft)
+  riskLevel       RiskLevel?    @map("risk_level")
+  riskScore       Int           @default(0) @map("risk_score")
+  detectionResult Json?         @map("detection_result")
+  isPinned        Boolean       @default(false) @map("is_pinned")
+  authorId        Int           @map("author_id")
+  author          User          @relation(fields: [authorId], references: [id])
+  reviews         Review[]
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@index([riskLevel])
+  @@map("contents")
+}
+
+enum ContentStatus {
+  draft
+  pending
+  published
+  rejected
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+model SensitiveWord {
+  id          Int       @id @default(autoincrement())
+  word        String    @unique @db.VarChar(100)
+  riskLevel   RiskLevel @map("risk_level")
+  replacement String    @default("***") @db.VarChar(100)
+  category    String    @default("") @db.VarChar(50)
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([enabled])
+  @@map("sensitive_words")
+}
+
+model Review {
+  id         Int          @id @default(autoincrement())
+  contentId  Int          @map("content_id")
+  content    Content      @relation(fields: [contentId], references: [id])
+  reviewerId Int          @map("reviewer_id")
+  reviewer   User         @relation(fields: [reviewerId], references: [id])
+  action     ReviewAction
+  comment    String?      @db.Text
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([contentId])
+  @@map("reviews")
+}
+
+enum ReviewAction {
+  approve
+  reject
+}
+
+model OperationLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  user       User     @relation(fields: [userId], references: [id])
+  action     String   @db.VarChar(50)
+  targetType String   @map("target_type") @db.VarChar(50)
+  targetId   Int?     @map("target_id")
+  detail     String?  @db.Text
+  ip         String?  @db.VarChar(45)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("operation_logs")
+}

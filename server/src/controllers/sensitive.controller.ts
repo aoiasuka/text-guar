@@ -1,0 +1,67 @@
+import type { Request, Response } from 'express';
+import { z } from 'zod';
+import {
+  batchCreateSensitiveWords,
+  createSensitiveWord,
+  deleteSensitiveWord,
+  listSensitiveWords,
+  updateSensitiveWord,
+} from '../services/sensitive.service.js';
+import { writeLog } from '../services/log.service.js';
+import { ok } from '../utils/response.js';
+
+export const sensitiveQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(10),
+  keyword: z.string().optional(),
+  riskLevel: z.enum(['low', 'medium', 'high']).optional(),
+  enabled: z.coerce.boolean().optional(),
+});
+
+export const sensitiveSchema = z.object({
+  word: z.string().min(1).max(100),
+  riskLevel: z.enum(['low', 'medium', 'high']),
+  replacement: z.string().max(100).default('***'),
+  category: z.string().max(50).default('默认'),
+});
+
+export const batchSchema = z.object({ items: z.array(sensitiveSchema).min(1) });
+export const toggleSchema = z.object({ enabled: z.boolean() });
+
+export async function listController(req: Request, res: Response) {
+  return ok(res, await listSensitiveWords(req.query as never));
+}
+
+export async function createController(req: Request, res: Response) {
+  const item = await createSensitiveWord(req.body);
+  await writeLog({
+    userId: req.user!.id,
+    action: 'create_sensitive_word',
+    targetType: 'sensitive_word',
+    targetId: item.id,
+    detail: { word: item.word, riskLevel: item.riskLevel },
+    ip: req.ip,
+  });
+  return ok(res, item);
+}
+
+export async function batchController(req: Request, res: Response) {
+  const result = await batchCreateSensitiveWords(req.body.items);
+  return ok(res, result);
+}
+
+export async function updateController(req: Request, res: Response) {
+  const item = await updateSensitiveWord(Number(req.params.id), req.body);
+  return ok(res, item);
+}
+
+export async function toggleController(req: Request, res: Response) {
+  const item = await updateSensitiveWord(Number(req.params.id), { enabled: req.body.enabled });
+  return ok(res, item);
+}
+
+export async function deleteController(req: Request, res: Response) {
+  const id = Number(req.params.id);
+  await deleteSensitiveWord(id);
+  return ok(res, true);
+}
