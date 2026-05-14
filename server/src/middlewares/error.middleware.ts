@@ -10,7 +10,7 @@ export function notFoundHandler(req: Request, res: Response) {
 
 export function errorHandler(
   error: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ) {
@@ -33,7 +33,8 @@ export function errorHandler(
     return fail(res, 400, '数据校验失败');
   }
 
-  console.error('Unhandled error:', error);
+  const reqIdSuffix = req.requestId ? ` reqId=${req.requestId}` : '';
+  console.error(`[Unhandled]${reqIdSuffix}`, error);
   const message = error instanceof Error ? error.message : '服务器内部错误';
   return fail(res, 500, message);
 }

@@ -5,6 +5,7 @@ import dayjs from 'dayjs';
 import { contentApi } from '@/services/api.js';
 import type { Content } from '@/types/index.js';
 import { DetectResult } from '@/components/DetectResult.js';
+import { HighlightedText } from '@/components/HighlightedText.js';
 import { RiskTag } from '@/components/RiskTag.js';
 import { StatusTag } from '@/components/StatusTag.js';
 
@@ -12,12 +13,24 @@ export function ContentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [content, setContent] = useState<Content>();
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (id) contentApi.detail(Number(id)).then(setContent);
+    if (!id) return;
+    setLoading(true);
+    contentApi
+      .detail(Number(id))
+      .then(setContent)
+      .finally(() => setLoading(false));
   }, [id]);
 
-  if (!content) return null;
+  if (!content) {
+    return (
+      <Card loading={loading}>
+        <Typography.Text type="secondary">加载中...</Typography.Text>
+      </Card>
+    );
+  }
 
   return (
     <Space direction="vertical" size={16} className="full">
@@ -39,8 +52,12 @@ export function ContentDetailPage() {
           <Descriptions.Item label="更新时间">{dayjs(content.updatedAt).format('YYYY-MM-DD HH:mm')}</Descriptions.Item>
         </Descriptions>
         <Divider />
-        <Typography.Title level={5}>原文</Typography.Title>
-        <pre className="preview">{content.body}</pre>
+        <Typography.Title level={5}>原文（命中区域已高亮）</Typography.Title>
+        <HighlightedText
+          text={content.body}
+          matches={content.detectionResult?.matches}
+          className="preview"
+        />
         <Typography.Title level={5}>过滤预览</Typography.Title>
         <pre className="preview filtered">{content.filteredBody}</pre>
       </Card>

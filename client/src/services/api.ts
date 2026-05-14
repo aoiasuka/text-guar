@@ -68,10 +68,13 @@ export const reportApi = {
     });
     if (!response.ok) throw new Error('导出失败');
     const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const match = /filename\*?=(?:UTF-8'')?["']?([^;"']+)["']?/i.exec(disposition);
+    const fallback = type === 'word' ? 'content-security-report.docx' : 'content-security-report.xlsx';
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = type === 'word' ? 'content-security-report.docx' : 'content-security-report.xlsx';
+    link.download = match ? decodeURIComponent(match[1]) : fallback;
     link.click();
     URL.revokeObjectURL(url);
   },

@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { contentApi, reviewApi } from '@/services/api.js';
 import type { Content } from '@/types/index.js';
 import { DetectResult } from '@/components/DetectResult.js';
+import { HighlightedText } from '@/components/HighlightedText.js';
 import { RiskTag } from '@/components/RiskTag.js';
 
 export function ReviewDetailPage() {
@@ -11,6 +12,7 @@ export function ReviewDetailPage() {
   const navigate = useNavigate();
   const [content, setContent] = useState<Content>();
   const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
 
   useEffect(() => {
     if (id) contentApi.detail(Number(id)).then(setContent);
@@ -18,10 +20,15 @@ export function ReviewDetailPage() {
 
   const finish = async (action: 'approve' | 'reject') => {
     if (!content) return;
-    if (action === 'approve') await reviewApi.approve(content.id, comment);
-    else await reviewApi.reject(content.id, comment);
-    message.success(action === 'approve' ? '已通过' : '已驳回');
-    navigate('/review');
+    setSubmitting(action);
+    try {
+      if (action === 'approve') await reviewApi.approve(content.id, comment);
+      else await reviewApi.reject(content.id, comment);
+      message.success(action === 'approve' ? '已通过' : '已驳回');
+      navigate('/review');
+    } finally {
+      setSubmitting(null);
+    }
   };
 
   if (!content) return null;
@@ -34,13 +41,42 @@ export function ReviewDetailPage() {
           <Descriptions.Item label="作者">{content.author.username}</Descriptions.Item>
           <Descriptions.Item label="风险"><RiskTag level={content.riskLevel} /></Descriptions.Item>
         </Descriptions>
-        <Typography.Title level={5}>正文</Typography.Title>
-        <pre className="preview">{content.body}</pre>
+        <Typography.Title level={5}>正文（命中区域已高亮）</Typography.Title>
+        <HighlightedText
+          text={content.body}
+          matches={content.detectionResult?.matches}
+          className="preview"
+        />
         <Typography.Title level={5}>审核意见</Typography.Title>
-        <Input.TextArea rows={4} value={comment} onChange={(event) => setComment(event.target.value)} />
+        <Input.TextArea
+          rows={4}
+          value={comment}
+          maxLength={500}
+          showCount
+          placeholder="可选：请填写审核意见"
+          onChange={(event) => setComment(event.target.value)}
+        />
         <Space className="actions">
-          <Button type="primary" onClick={() => finish('approve')}>通过</Button>
-          <Button danger onClick={() => Modal.confirm({ title: '确认驳回？', onOk: () => finish('reject') })}>
+          <Button
+            type="primary"
+            loading={submitting === 'approve'}
+            disabled={submitting === 'reject'}
+            onClick={() => finish('approve')}
+          >
+            通过
+          </Button>
+          <Button
+            danger
+            loading={submitting === 'reject'}
+            disabled={submitting === 'approve'}
+            onClick={() =>
+              Modal.confirm({
+                title: '确认驳回？',
+                content: '驳回后内容将退回至编辑修改。',
+                onOk: () => finish('reject'),
+              })
+            }
+          >
             驳回
           </Button>
           <Button onClick={() => navigate('/review')}>返回</Button>
