@@ -5,7 +5,11 @@ import { prisma } from '../utils/prisma.js';
 const { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } =
   docx as Record<string, any>;
 
-export async function getStats() {
+const STATS_TTL_MS = 30_000;
+const EXCEL_MAX_ROWS = 5000;
+let statsCache: { value: Awaited<ReturnType<typeof computeStats>>; expireAt: number } | undefined;
+
+async function computeStats() {
   const [totalContents, pending, published, rejected, highRisk, reviews, recentLogs] =
     await Promise.all([
       prisma.content.count(),
@@ -40,11 +44,32 @@ export async function getStats() {
   };
 }
 
+export async function getStats(options: { force?: boolean } = {}) {
+  const now = Date.now();
+  if (!options.force && statsCache && statsCache.expireAt > now) {
+    return statsCache.value;
+  }
+  const value = await computeStats();
+  statsCache = { value, expireAt: now + STATS_TTL_MS };
+  return value;
+}
+
+export function invalidateStatsCache() {
+  statsCache = undefined;
+}
+
 export async function createWordReport() {
   const stats = await getStats();
   const highRisk = await prisma.content.findMany({
     where: { riskLevel: 'high' },
-    include: { author: { select: { username: true } } },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      riskScore: true,
+      updatedAt: true,
+      author: { select: { username: true } },
+    },
     orderBy: { updatedAt: 'desc' },
     take: 20,
   });
@@ -93,9 +118,20 @@ export async function createWordReport() {
 
 export async function createExcelReport() {
   const stats = await getStats();
+  const totalRows = await prisma.content.count();
   const contents = await prisma.content.findMany({
-    include: { author: { select: { username: true } } },
+    select: {
+      id: true,
+      title: true,
+      category: true,
+      status: true,
+      riskLevel: true,
+      riskScore: true,
+      createdAt: true,
+      author: { select: { username: true } },
+    },
     orderBy: { createdAt: 'desc' },
+    take: EXCEL_MAX_ROWS,
   });
 
   const workbook = new ExcelJS.Workbook();
@@ -107,6 +143,8 @@ export async function createExcelReport() {
     ['已发布', stats.published],
     ['已驳回', stats.rejected],
     ['高风险', stats.highRisk],
+    ['本次导出条数', contents.length],
+    ['是否截断', totalRows > EXCEL_MAX_ROWS ? `是（最多 ${EXCEL_MAX_ROWS} 条）` : '否'],
   ]);
 
   const sheet = workbook.addWorksheet('内容明细');
@@ -120,6 +158,7 @@ export async function createExcelReport() {
     { header: '风险分', key: 'riskScore', width: 10 },
     { header: '创建时间', key: 'createdAt', width: 24 },
   ];
+  sheet.getRow(1).font = { bold: true };
   contents.forEach((item) =>
     sheet.addRow({
       id: item.id,

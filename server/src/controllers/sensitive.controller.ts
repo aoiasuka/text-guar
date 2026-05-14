@@ -34,7 +34,7 @@ export async function listController(req: Request, res: Response) {
 
 export async function createController(req: Request, res: Response) {
   const item = await createSensitiveWord(req.body);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'create_sensitive_word',
     targetType: 'sensitive_word',

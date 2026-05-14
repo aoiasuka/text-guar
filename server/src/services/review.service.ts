@@ -1,4 +1,5 @@
 import { prisma } from '../utils/prisma.js';
+import { HttpError } from '../utils/errors.js';
 
 async function assertPendingContent(contentId: number) {
   const content = await prisma.content.findUniqueOrThrow({
@@ -7,7 +8,7 @@ async function assertPendingContent(contentId: number) {
   });
 
   if (content.status !== 'pending') {
-    throw new Error('只有待审核内容可以执行审核操作');
+    throw new HttpError(409, '只有待审核内容可以执行审核操作');
   }
 }
 

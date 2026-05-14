@@ -78,5 +78,6 @@ export const reportApi = {
 };
 
 export const logApi = {
-  list: (params?: Record<string, unknown>) => request.get<PageResult<OperationLog>>('/logs', { params }),
+  list: (params?: Record<string, unknown> | object) =>
+    request.get<PageResult<OperationLog>>('/logs', { params }),
 };

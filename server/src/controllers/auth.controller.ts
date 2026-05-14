@@ -23,7 +23,7 @@ export const passwordSchema = z.object({
 export async function loginController(req: Request, res: Response) {
   const result = await login(req.body.username, req.body.password);
   if (!result) return fail(res, 401, '用户名或密码错误');
-  await writeLog({
+  writeLog({
     userId: result.user.id,
     action: 'login',
     targetType: 'user',
@@ -35,7 +35,7 @@ export async function loginController(req: Request, res: Response) {
 
 export async function registerController(req: Request, res: Response) {
   const user = await register(req.body);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'register_user',
     targetType: 'user',

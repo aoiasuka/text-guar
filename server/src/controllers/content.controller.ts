@@ -43,7 +43,7 @@ export async function detailController(req: Request, res: Response) {
 
 export async function createController(req: Request, res: Response) {
   const content = await createContent({ ...req.body, authorId: req.user!.id });
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'create_content',
     targetType: 'content',
@@ -56,7 +56,7 @@ export async function createController(req: Request, res: Response) {
 
 export async function updateController(req: Request, res: Response) {
   const content = await updateContent(Number(req.params.id), req.body);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'update_content',
     targetType: 'content',
@@ -69,7 +69,7 @@ export async function updateController(req: Request, res: Response) {
 export async function deleteController(req: Request, res: Response) {
   const id = Number(req.params.id);
   await deleteContent(id);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'delete_content',
     targetType: 'content',
@@ -82,7 +82,7 @@ export async function deleteController(req: Request, res: Response) {
 export async function submitController(req: Request, res: Response) {
   const id = Number(req.params.id);
   const result = await submitContent(id);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: result.rejected ? 'submit_content_rejected_by_detector' : 'submit_content',
     targetType: 'content',

@@ -8,6 +8,9 @@ export const logQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).default(10),
   action: z.string().optional(),
   userId: z.coerce.number().int().positive().optional(),
+  targetType: z.string().optional(),
+  startAt: z.coerce.date().optional(),
+  endAt: z.coerce.date().optional(),
 });
 
 export async function listController(req: Request, res: Response) {

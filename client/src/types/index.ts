@@ -44,7 +44,7 @@ export interface OperationLog {
   action: string;
   targetType: string;
   targetId?: number;
-  detail?: string;
+  detail?: unknown;
   ip?: string;
   createdAt: string;
   user: Pick<User, 'id' | 'username' | 'role'>;

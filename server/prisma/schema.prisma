@@ -44,6 +44,9 @@ model Content {
 
   @@index([status, createdAt])
   @@index([riskLevel])
+  @@index([authorId, status])
+  @@index([category])
+  @@index([isPinned, createdAt])
   @@map("contents")
 }
 
@@ -70,6 +73,7 @@ model SensitiveWord {
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([enabled])
+  @@index([enabled, riskLevel])
   @@map("sensitive_words")
 }
 
@@ -84,6 +88,8 @@ model Review {
   createdAt  DateTime     @default(now()) @map("created_at")
 
   @@index([contentId])
+  @@index([reviewerId, createdAt])
+  @@index([action, createdAt])
   @@map("reviews")
 }
 
@@ -104,5 +110,8 @@ model OperationLog {
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+  @@index([createdAt])
   @@map("operation_logs")
 }

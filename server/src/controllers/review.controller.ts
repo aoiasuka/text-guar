@@ -28,7 +28,7 @@ export async function historyController(req: Request, res: Response) {
 
 export async function approveController(req: Request, res: Response) {
   const content = await approveContent(Number(req.params.contentId), req.user!.id, req.body.comment);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'approve_content',
     targetType: 'content',
@@ -41,7 +41,7 @@ export async function approveController(req: Request, res: Response) {
 
 export async function rejectController(req: Request, res: Response) {
   const content = await rejectContent(Number(req.params.contentId), req.user!.id, req.body.comment);
-  await writeLog({
+  writeLog({
     userId: req.user!.id,
     action: 'reject_content',
     targetType: 'content',

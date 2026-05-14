@@ -5,6 +5,20 @@ import { prisma } from '../utils/prisma.js';
 
 const includeAuthor = { author: { select: { id: true, username: true, role: true } } };
 
+const listSelect = {
+  id: true,
+  title: true,
+  category: true,
+  status: true,
+  riskLevel: true,
+  riskScore: true,
+  isPinned: true,
+  authorId: true,
+  createdAt: true,
+  updatedAt: true,
+  author: { select: { id: true, username: true, role: true } },
+} satisfies Prisma.ContentSelect;
+
 export async function listContents(query: {
   page: number;
   pageSize: number;
@@ -25,7 +39,7 @@ export async function listContents(query: {
   const [list, total] = await Promise.all([
     prisma.content.findMany({
       where,
-      include: includeAuthor,
+      select: listSelect,
       orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
