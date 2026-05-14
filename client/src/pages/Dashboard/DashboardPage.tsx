@@ -1,19 +1,63 @@
-import { Card, Col, List, Row, Space, Statistic, Table, Typography } from 'antd';
-import { useEffect, useState } from 'react';
+import { Card, Col, Empty, List, Row, Skeleton, Space, Statistic, Table, Tag, Typography } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import { reportApi, reviewApi } from '@/services/api.js';
 import { RiskTag } from '@/components/RiskTag.js';
 import { StatusTag } from '@/components/StatusTag.js';
+import { RiskPieChart } from '@/components/RiskPieChart.js';
 import type { Content } from '@/types/index.js';
+
+const riskColor: Record<string, string> = {
+  low: '#52c41a',
+  medium: '#faad14',
+  high: '#f5222d',
+};
+
+const riskLabel: Record<string, string> = {
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
+};
 
 export function DashboardPage() {
   const [stats, setStats] = useState<Awaited<ReturnType<typeof reportApi.stats>>>();
   const [pending, setPending] = useState<Content[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    reportApi.stats().then(setStats);
-    reviewApi.pending({ page: 1, pageSize: 5 }).then((data) => setPending(data.list));
+    let mounted = true;
+    setLoading(true);
+    Promise.all([reportApi.stats(), reviewApi.pending({ page: 1, pageSize: 5 })])
+      .then(([statsResult, pendingResult]) => {
+        if (!mounted) return;
+        setStats(statsResult);
+        setPending(pendingResult.list);
+      })
+      .finally(() => mounted && setLoading(false));
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  const riskSlices = useMemo(() => {
+    const order: Array<'high' | 'medium' | 'low'> = ['high', 'medium', 'low'];
+    const map = new Map(stats?.riskDistribution?.map((item) => [item.riskLevel, item._count]));
+    return order.map((level) => ({
+      label: riskLabel[level],
+      value: map.get(level) ?? 0,
+      color: riskColor[level],
+    }));
+  }, [stats]);
+
+  const statusSummary = useMemo(() => {
+    if (!stats) return [];
+    return [
+      { label: '草稿', value: Math.max(0, stats.totalContents - stats.pending - stats.published - stats.rejected) },
+      { label: '待审核', value: stats.pending, tone: 'processing' as const },
+      { label: '已发布', value: stats.published, tone: 'success' as const },
+      { label: '已驳回', value: stats.rejected, tone: 'error' as const },
+    ];
+  }, [stats]);
 
   return (
     <Space direction="vertical" size={18} className="full">
@@ -23,17 +67,44 @@ export function DashboardPage() {
       </div>
       <Row gutter={[16, 16]}>
         {[
-          ['内容总数', stats?.totalContents || 0],
-          ['待审核', stats?.pending || 0],
-          ['高风险内容', stats?.highRisk || 0],
-          ['审核通过率', `${stats?.passRate || 0}%`],
-        ].map(([label, value]) => (
-          <Col xs={24} sm={12} lg={6} key={label}>
+          ['内容总数', stats?.totalContents ?? 0, '#1c2523'],
+          ['待审核', stats?.pending ?? 0, '#1677ff'],
+          ['高风险内容', stats?.highRisk ?? 0, '#f5222d'],
+          ['审核通过率', `${stats?.passRate ?? 0}%`, '#52c41a'],
+        ].map(([label, value, color]) => (
+          <Col xs={24} sm={12} lg={6} key={String(label)}>
             <Card>
-              <Statistic title={label} value={value} />
+              {loading ? (
+                <Skeleton.Input active size="large" />
+              ) : (
+                <Statistic title={String(label)} value={value as number | string} valueStyle={{ color: color as string }} />
+              )}
             </Card>
           </Col>
         ))}
+      </Row>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={10}>
+          <Card title="风险等级分布" loading={loading}>
+            <RiskPieChart data={riskSlices} />
+          </Card>
+        </Col>
+        <Col xs={24} xl={14}>
+          <Card title="内容状态概览" loading={loading}>
+            <Space wrap size={[16, 16]}>
+              {statusSummary.map((item) => (
+                <div key={item.label} style={{ minWidth: 120 }}>
+                  <Typography.Text type="secondary">{item.label}</Typography.Text>
+                  <div style={{ marginTop: 4 }}>
+                    <Tag color={item.tone || 'default'} style={{ fontSize: 18, padding: '4px 10px' }}>
+                      {item.value}
+                    </Tag>
+                  </div>
+                </div>
+              ))}
+            </Space>
+          </Card>
+        </Col>
       </Row>
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={15}>
@@ -41,12 +112,14 @@ export function DashboardPage() {
             <Table
               rowKey="id"
               dataSource={pending}
+              loading={loading}
               pagination={false}
+              locale={{ emptyText: <Empty description="暂无待审核内容" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
               columns={[
-                { title: '标题', dataIndex: 'title' },
-                { title: '分类', dataIndex: 'category' },
-                { title: '风险', dataIndex: 'riskLevel', render: (value) => <RiskTag level={value} /> },
-                { title: '状态', dataIndex: 'status', render: (value) => <StatusTag status={value} /> },
+                { title: '标题', dataIndex: 'title', ellipsis: true },
+                { title: '分类', dataIndex: 'category', width: 100 },
+                { title: '风险', dataIndex: 'riskLevel', width: 110, render: (value) => <RiskTag level={value} /> },
+                { title: '状态', dataIndex: 'status', width: 100, render: (value) => <StatusTag status={value} /> },
               ]}
             />
           </Card>
@@ -54,7 +127,9 @@ export function DashboardPage() {
         <Col xs={24} xl={9}>
           <Card title="最近操作">
             <List
+              loading={loading}
               dataSource={stats?.recentLogs || []}
+              locale={{ emptyText: <Empty description="暂无操作日志" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
               renderItem={(item) => (
                 <List.Item>
                   <List.Item.Meta

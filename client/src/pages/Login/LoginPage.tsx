@@ -1,11 +1,12 @@
 import { Button, Form, Input, Typography, message } from 'antd';
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { authApi } from '@/services/api.js';
 import { useAuthStore } from '@/stores/useAuthStore.js';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const setSession = useAuthStore((state) => state.setSession);
 
   return (
@@ -27,7 +28,8 @@ export function LoginPage() {
               const result = await authApi.login(values);
               setSession(result.token, result.user);
               message.success('登录成功');
-              navigate('/dashboard');
+              const redirect = searchParams.get('redirect');
+              navigate(redirect && redirect.startsWith('/') ? redirect : '/dashboard', { replace: true });
             }}
           >
             <Form.Item name="username" label="用户名" rules={[{ required: true }]}>

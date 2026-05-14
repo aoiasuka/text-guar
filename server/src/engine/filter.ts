@@ -1,13 +1,19 @@
 import type { DetectionMatch } from '@text-guard/shared';
 
 export function applyReplacement(text: string, matches: DetectionMatch[]) {
-  const sorted = [...matches].sort((a, b) => b.start - a.start || b.end - a.end);
-  let output = text;
+  if (matches.length === 0) return text;
+
+  const sorted = [...matches].sort((a, b) => a.start - b.start || b.end - a.end);
+  const parts: string[] = [];
+  let cursor = 0;
 
   for (const match of sorted) {
-    output =
-      output.slice(0, match.start) + (match.replacement || '***') + output.slice(match.end);
+    if (match.start < cursor) continue;
+    if (match.start > cursor) parts.push(text.slice(cursor, match.start));
+    parts.push(match.replacement || '***');
+    cursor = match.end;
   }
+  if (cursor < text.length) parts.push(text.slice(cursor));
 
-  return output;
+  return parts.join('');
 }
