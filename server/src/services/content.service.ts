@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { ContentStatus, RiskLevel } from '@text-guard/shared';
 import { detector } from '../engine/detector.js';
 import { prisma } from '../utils/prisma.js';
+import { invalidateStatsCache } from './report.service.js';
 
 const includeAuthor = { author: { select: { id: true, username: true, role: true } } };
 
@@ -73,7 +74,7 @@ export async function createContent(input: {
   authorId: number;
 }) {
   const detection = detector.detect(input.body);
-  return prisma.content.create({
+  const content = await prisma.content.create({
     data: {
       title: input.title,
       body: input.body,
@@ -87,6 +88,8 @@ export async function createContent(input: {
     },
     include: includeAuthor,
   });
+  invalidateStatsCache();
+  return content;
 }
 
 export async function updateContent(
@@ -95,7 +98,7 @@ export async function updateContent(
 ) {
   const body = input.body;
   const detection = body ? detector.detect(body) : undefined;
-  return prisma.content.update({
+  const content = await prisma.content.update({
     where: { id },
     data: {
       title: input.title,
@@ -109,10 +112,13 @@ export async function updateContent(
     },
     include: includeAuthor,
   });
+  invalidateStatsCache();
+  return content;
 }
 
 export async function deleteContent(id: number) {
   await prisma.content.delete({ where: { id } });
+  invalidateStatsCache();
 }
 
 export async function submitContent(id: number) {
@@ -130,6 +136,7 @@ export async function submitContent(id: number) {
         detectionResult: detection as unknown as Prisma.InputJsonValue,
       },
     });
+    invalidateStatsCache();
     return { rejected: true, content: updated, detection };
   }
 
@@ -143,6 +150,7 @@ export async function submitContent(id: number) {
       detectionResult: detection as unknown as Prisma.InputJsonValue,
     },
   });
+  invalidateStatsCache();
   return { rejected: false, content: updated, detection };
 }
 

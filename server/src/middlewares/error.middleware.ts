@@ -35,6 +35,9 @@ export function errorHandler(
 
   const reqIdSuffix = req.requestId ? ` reqId=${req.requestId}` : '';
   console.error(`[Unhandled]${reqIdSuffix}`, error);
-  const message = error instanceof Error ? error.message : '服务器内部错误';
+  const isProduction = process.env.NODE_ENV === 'production';
+  const message = !isProduction && error instanceof Error
+    ? error.message
+    : '服务器内部错误';
   return fail(res, 500, message);
 }

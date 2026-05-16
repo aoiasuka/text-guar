@@ -1,34 +1,92 @@
 import { Button, Card, Form, Input, Popconfirm, Select, Space, Table, message } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { contentApi } from '@/services/api.js';
 import type { Content } from '@/types/index.js';
 import { RiskTag } from '@/components/RiskTag.js';
 import { StatusTag } from '@/components/StatusTag.js';
 
+const STATUS_VALUES = ['draft', 'pending', 'published', 'rejected'] as const;
+const RISK_VALUES = ['low', 'medium', 'high'] as const;
+
+type StatusValue = (typeof STATUS_VALUES)[number];
+type RiskValue = (typeof RISK_VALUES)[number];
+
+interface ListQuery {
+  page: number;
+  pageSize: number;
+  keyword?: string;
+  status?: StatusValue;
+  riskLevel?: RiskValue;
+}
+
+function parseQuery(params: URLSearchParams): ListQuery {
+  const page = Number(params.get('page')) || 1;
+  const pageSize = Number(params.get('pageSize')) || 10;
+  const keyword = params.get('keyword') || undefined;
+  const statusRaw = params.get('status');
+  const riskRaw = params.get('riskLevel');
+  const status = STATUS_VALUES.find((s) => s === statusRaw);
+  const riskLevel = RISK_VALUES.find((r) => r === riskRaw);
+  return { page, pageSize, keyword, status, riskLevel };
+}
+
+function buildSearch(query: ListQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  if (query.page > 1) params.set('page', String(query.page));
+  if (query.pageSize !== 10) params.set('pageSize', String(query.pageSize));
+  if (query.keyword) params.set('keyword', query.keyword);
+  if (query.status) params.set('status', query.status);
+  if (query.riskLevel) params.set('riskLevel', query.riskLevel);
+  return params;
+}
+
 export function ContentListPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [form] = Form.useForm();
   const [data, setData] = useState<Content[]>([]);
   const [total, setTotal] = useState(0);
-  const [query, setQuery] = useState({ page: 1, pageSize: 10 });
+  const [loading, setLoading] = useState(false);
 
-  const load = (params = query) => {
-    contentApi.list(params).then((result) => {
+  const query = useMemo(() => parseQuery(searchParams), [searchParams]);
+
+  const updateQuery = useCallback(
+    (patch: Partial<ListQuery>) => {
+      const next = { ...query, ...patch };
+      setSearchParams(buildSearch(next));
+    },
+    [query, setSearchParams],
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await contentApi.list(query as unknown as Record<string, unknown>);
       setData(result.list);
       setTotal(result.total);
-    });
-  };
+    } finally {
+      setLoading(false);
+    }
+  }, [query]);
 
-  useEffect(() => load(), []);
+  useEffect(() => {
+    form.setFieldsValue({
+      keyword: query.keyword,
+      status: query.status,
+      riskLevel: query.riskLevel,
+    });
+    void load();
+  }, [query, form, load]);
 
   return (
     <Card
       title="内容管理"
       extra={
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => load()} />
+          <Button icon={<ReloadOutlined />} onClick={load} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/contents/create')}>
             新建内容
           </Button>
@@ -36,13 +94,17 @@ export function ContentListPage() {
       }
     >
       <Form
+        form={form}
         layout="inline"
         className="toolbar"
-        onFinish={(values) => {
-          const next = { ...query, ...values, page: 1 };
-          setQuery(next);
-          load(next);
-        }}
+        onFinish={(values) =>
+          updateQuery({
+            page: 1,
+            keyword: values.keyword || undefined,
+            status: values.status,
+            riskLevel: values.riskLevel,
+          })
+        }
       >
         <Form.Item name="keyword">
           <Input.Search placeholder="标题或正文" allowClear />
@@ -72,22 +134,30 @@ export function ContentListPage() {
             ]}
           />
         </Form.Item>
-        <Button htmlType="submit" type="primary">
-          筛选
-        </Button>
+        <Space>
+          <Button htmlType="submit" type="primary">
+            筛选
+          </Button>
+          <Button
+            onClick={() => {
+              form.resetFields();
+              setSearchParams(new URLSearchParams());
+            }}
+          >
+            重置
+          </Button>
+        </Space>
       </Form>
       <Table
         rowKey="id"
         dataSource={data}
+        loading={loading}
         pagination={{
           total,
           current: query.page,
           pageSize: query.pageSize,
-          onChange: (page, pageSize) => {
-            const next = { ...query, page, pageSize };
-            setQuery(next);
-            load(next);
-          },
+          showSizeChanger: true,
+          onChange: (page, pageSize) => updateQuery({ page, pageSize }),
         }}
         columns={[
           { title: '标题', dataIndex: 'title' },
@@ -108,22 +178,30 @@ export function ContentListPage() {
                 <Button size="small" onClick={() => navigate(`/contents/${record.id}/edit`)}>
                   编辑
                 </Button>
-                <Button size="small" onClick={async () => {
-                  const result = await contentApi.submit(record.id);
-                  if (result.rejected) {
-                    message.warning('检测为高风险，已自动驳回');
-                  } else {
-                    message.success('已提交审核');
-                  }
-                  load();
-                }}>
+                <Button
+                  size="small"
+                  onClick={async () => {
+                    const result = await contentApi.submit(record.id);
+                    if (result.rejected) {
+                      message.warning('检测为高风险，已自动驳回');
+                    } else {
+                      message.success('已提交审核');
+                    }
+                    load();
+                  }}
+                >
                   提审
                 </Button>
-                <Popconfirm title="确认删除？" onConfirm={async () => {
-                  await contentApi.remove(record.id);
-                  load();
-                }}>
-                  <Button size="small" danger>删除</Button>
+                <Popconfirm
+                  title="确认删除？"
+                  onConfirm={async () => {
+                    await contentApi.remove(record.id);
+                    load();
+                  }}
+                >
+                  <Button size="small" danger>
+                    删除
+                  </Button>
                 </Popconfirm>
               </Space>
             ),

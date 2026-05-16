@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
   approveContent,
+  batchReview,
   listPendingReviews,
   listReviewHistory,
   rejectContent,
@@ -15,6 +16,12 @@ export const reviewQuerySchema = z.object({
 });
 
 export const reviewBodySchema = z.object({ comment: z.string().max(500).optional() });
+
+export const batchReviewSchema = z.object({
+  contentIds: z.array(z.number().int().positive()).min(1).max(200),
+  action: z.enum(['approve', 'reject']),
+  comment: z.string().max(500).optional(),
+});
 
 export async function pendingController(req: Request, res: Response) {
   const query = req.query as unknown as { page: number; pageSize: number };
@@ -50,4 +57,26 @@ export async function rejectController(req: Request, res: Response) {
     ip: req.ip,
   });
   return ok(res, content);
+}
+
+export async function batchController(req: Request, res: Response) {
+  const result = await batchReview(
+    req.body.contentIds,
+    req.user!.id,
+    req.body.action,
+    req.body.comment,
+  );
+  writeLog({
+    userId: req.user!.id,
+    action: req.body.action === 'approve' ? 'batch_approve_content' : 'batch_reject_content',
+    targetType: 'content',
+    detail: {
+      count: result.count,
+      skipped: result.skipped,
+      ids: req.body.contentIds,
+      comment: req.body.comment,
+    },
+    ip: req.ip,
+  });
+  return ok(res, result);
 }

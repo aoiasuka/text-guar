@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
   batchCreateSensitiveWords,
+  batchDeleteSensitiveWords,
+  batchUpdateEnabled,
   createSensitiveWord,
   deleteSensitiveWord,
   listSensitiveWords,
@@ -27,6 +29,10 @@ export const sensitiveSchema = z.object({
 
 export const batchSchema = z.object({ items: z.array(sensitiveSchema).min(1) });
 export const toggleSchema = z.object({ enabled: z.boolean() });
+export const batchIdsSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(500),
+});
+export const batchToggleSchema = batchIdsSchema.extend({ enabled: z.boolean() });
 
 export async function listController(req: Request, res: Response) {
   return ok(res, await listSensitiveWords(req.query as never));
@@ -47,6 +53,13 @@ export async function createController(req: Request, res: Response) {
 
 export async function batchController(req: Request, res: Response) {
   const result = await batchCreateSensitiveWords(req.body.items);
+  writeLog({
+    userId: req.user!.id,
+    action: 'batch_create_sensitive_word',
+    targetType: 'sensitive_word',
+    detail: { count: result.count },
+    ip: req.ip,
+  });
   return ok(res, result);
 }
 
@@ -63,5 +76,36 @@ export async function toggleController(req: Request, res: Response) {
 export async function deleteController(req: Request, res: Response) {
   const id = Number(req.params.id);
   await deleteSensitiveWord(id);
+  writeLog({
+    userId: req.user!.id,
+    action: 'delete_sensitive_word',
+    targetType: 'sensitive_word',
+    targetId: id,
+    ip: req.ip,
+  });
   return ok(res, true);
+}
+
+export async function batchToggleController(req: Request, res: Response) {
+  const result = await batchUpdateEnabled(req.body.ids, req.body.enabled);
+  writeLog({
+    userId: req.user!.id,
+    action: req.body.enabled ? 'batch_enable_sensitive_word' : 'batch_disable_sensitive_word',
+    targetType: 'sensitive_word',
+    detail: { count: result.count, ids: req.body.ids },
+    ip: req.ip,
+  });
+  return ok(res, result);
+}
+
+export async function batchDeleteController(req: Request, res: Response) {
+  const result = await batchDeleteSensitiveWords(req.body.ids);
+  writeLog({
+    userId: req.user!.id,
+    action: 'batch_delete_sensitive_word',
+    targetType: 'sensitive_word',
+    detail: { count: result.count, ids: req.body.ids },
+    ip: req.ip,
+  });
+  return ok(res, result);
 }

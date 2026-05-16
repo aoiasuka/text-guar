@@ -38,6 +38,10 @@ export const sensitiveApi = {
   toggle: (id: number, enabled: boolean) =>
     request.patch<SensitiveWord>(`/sensitive-words/${id}/toggle`, { enabled }),
   remove: (id: number) => request.delete<boolean>(`/sensitive-words/${id}`),
+  batchToggle: (ids: number[], enabled: boolean) =>
+    request.post<{ count: number }>('/sensitive-words/batch/toggle', { ids, enabled }),
+  batchRemove: (ids: number[]) =>
+    request.post<{ count: number }>('/sensitive-words/batch/delete', { ids }),
 };
 
 export const reviewApi = {
@@ -47,6 +51,12 @@ export const reviewApi = {
   approve: (id: number, comment?: string) =>
     request.post<Content>(`/reviews/${id}/approve`, { comment }),
   reject: (id: number, comment?: string) => request.post<Content>(`/reviews/${id}/reject`, { comment }),
+  batch: (contentIds: number[], action: 'approve' | 'reject', comment?: string) =>
+    request.post<{ count: number; skipped: number[] }>('/reviews/batch', {
+      contentIds,
+      action,
+      comment,
+    }),
 };
 
 export const reportApi = {

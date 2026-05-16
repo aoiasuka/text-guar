@@ -1,7 +1,9 @@
 import type { DetectionMatch, DetectionResult, RiskLevel } from '@text-guard/shared';
 import { applyReplacement } from './filter.js';
+import { mapToOriginalRange, normalize } from './normalizer.js';
 import { scanByRegex } from './regex-rules.js';
 import { getFilterStrategy, getRiskLevel, riskWeight } from './risk-scorer.js';
+import { applyWhitelist } from './whitelist.js';
 
 export interface SensitiveWordEntry {
   word: string;
@@ -22,6 +24,8 @@ function createNode(): TrieNode {
 
 const MAX_CACHE = 200;
 const MAX_CACHE_TEXT_LEN = 4096;
+
+const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 };
 
 export class SensitiveDetector {
   private words: SensitiveWordEntry[] = [];
@@ -51,22 +55,25 @@ export class SensitiveDetector {
       if (cached) return cached;
     }
 
-    const wordMatches = this.scanWords(text);
+    const normalized = normalize(text);
+    const wordMatches = this.scanWords(text, normalized);
     const regexMatches = scanByRegex(text);
-    const matches = this.deduplicate([...wordMatches, ...regexMatches]);
-    const score = matches.reduce((sum, item) => sum + riskWeight[item.riskLevel], 0);
+    const all = [...wordMatches, ...regexMatches];
+    const merged = mergeOverlapping(all, text);
+    const filtered = applyWhitelist(text, merged);
+    const score = filtered.reduce((sum, item) => sum + riskWeight[item.riskLevel], 0);
     const level = getRiskLevel(score);
     const strategy = getFilterStrategy(score);
-    const filteredText = applyReplacement(text, matches);
+    const filteredText = applyReplacement(text, filtered);
 
     const result: DetectionResult = {
-      matches,
+      matches: filtered,
       score,
       level,
       strategy,
       filteredText,
-      summary: matches.length
-        ? `命中 ${matches.length} 项风险，评分 ${score}，建议策略：${strategy}`
+      summary: filtered.length
+        ? `命中 ${filtered.length} 项风险，评分 ${score}，建议策略：${strategy}`
         : '未发现敏感信息',
     };
 
@@ -81,15 +88,17 @@ export class SensitiveDetector {
     return result;
   }
 
-  private scanWords(text: string): DetectionMatch[] {
+  private scanWords(
+    original: string,
+    normalized: ReturnType<typeof normalize>,
+  ): DetectionMatch[] {
     if (this.words.length === 0) return [];
 
     const matches: DetectionMatch[] = [];
     let node = this.root;
-    const normalized = text.toLowerCase();
 
-    for (let index = 0; index < normalized.length; index += 1) {
-      const char = normalized[index];
+    for (let index = 0; index < normalized.text.length; index += 1) {
+      const char = normalized.text[index];
       while (node !== this.root && !node.next.has(char)) {
         node = node.fail || this.root;
       }
@@ -97,16 +106,18 @@ export class SensitiveDetector {
 
       if (node.outputs.length === 0) continue;
       for (const item of node.outputs) {
-        const start = index - item.word.length + 1;
-        const hit = text.slice(start, index + 1);
+        const normalizedStart = index - item.word.length + 1;
+        const normalizedEnd = index + 1;
+        const range = mapToOriginalRange(normalized, normalizedStart, normalizedEnd);
+        const hit = original.slice(range.start, range.end);
         matches.push({
           type: 'word',
           word: hit,
           riskLevel: item.riskLevel,
           category: item.category,
           replacement: item.replacement || '***',
-          start,
-          end: index + 1,
+          start: range.start,
+          end: range.end,
         });
       }
     }
@@ -144,22 +155,42 @@ export class SensitiveDetector {
       }
     }
   }
+}
 
-  private deduplicate(matches: DetectionMatch[]) {
-    if (matches.length <= 1) return matches;
+function compareForMerge(a: DetectionMatch, b: DetectionMatch) {
+  if (a.start !== b.start) return a.start - b.start;
+  if (a.end !== b.end) return b.end - a.end;
+  return riskRank[b.riskLevel] - riskRank[a.riskLevel];
+}
 
-    matches.sort((a, b) => a.start - b.start || b.end - a.end);
-    const result: DetectionMatch[] = [];
-    const seen = new Set<string>();
+export function mergeOverlapping(matches: DetectionMatch[], text?: string): DetectionMatch[] {
+  if (matches.length <= 1) return [...matches];
+  const sorted = [...matches].sort(compareForMerge);
 
-    for (const match of matches) {
-      const key = `${match.start}:${match.end}:${match.word}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+  const result: DetectionMatch[] = [];
+  for (const match of sorted) {
+    const last = result[result.length - 1];
+    if (!last || match.start >= last.end) {
       result.push(match);
+      continue;
     }
-    return result;
+    // Overlap: union the span; keep meta of higher risk (tie-break by longer span)
+    const unionStart = Math.min(last.start, match.start);
+    const unionEnd = Math.max(last.end, match.end);
+    const matchRank = riskRank[match.riskLevel];
+    const lastRank = riskRank[last.riskLevel];
+    const keepMatchMeta =
+      matchRank > lastRank ||
+      (matchRank === lastRank && match.end - match.start > last.end - last.start);
+    const base = keepMatchMeta ? match : last;
+    result[result.length - 1] = {
+      ...base,
+      start: unionStart,
+      end: unionEnd,
+      word: text ? text.slice(unionStart, unionEnd) : base.word,
+    };
   }
+  return result;
 }
 
 function emptyResult(text: string): DetectionResult {

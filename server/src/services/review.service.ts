@@ -1,5 +1,6 @@
 import { prisma } from '../utils/prisma.js';
 import { HttpError } from '../utils/errors.js';
+import { invalidateStatsCache } from './report.service.js';
 
 async function assertPendingContent(contentId: number) {
   const content = await prisma.content.findUniqueOrThrow({
@@ -52,6 +53,7 @@ export async function approveContent(contentId: number, reviewerId: number, comm
     }),
     prisma.content.update({ where: { id: contentId }, data: { status: 'published' } }),
   ]);
+  invalidateStatsCache();
   return content;
 }
 
@@ -64,5 +66,38 @@ export async function rejectContent(contentId: number, reviewerId: number, comme
     }),
     prisma.content.update({ where: { id: contentId }, data: { status: 'rejected' } }),
   ]);
+  invalidateStatsCache();
   return content;
+}
+
+export async function batchReview(
+  contentIds: number[],
+  reviewerId: number,
+  action: 'approve' | 'reject',
+  comment?: string,
+) {
+  if (contentIds.length === 0) return { count: 0, skipped: [] as number[] };
+
+  const pendingContents = await prisma.content.findMany({
+    where: { id: { in: contentIds }, status: 'pending' },
+    select: { id: true },
+  });
+  const pendingIds = pendingContents.map((c) => c.id);
+  const skipped = contentIds.filter((id) => !pendingIds.includes(id));
+
+  if (pendingIds.length > 0) {
+    const nextStatus = action === 'approve' ? 'published' : 'rejected';
+    await prisma.$transaction([
+      prisma.review.createMany({
+        data: pendingIds.map((contentId) => ({ contentId, reviewerId, action, comment })),
+      }),
+      prisma.content.updateMany({
+        where: { id: { in: pendingIds } },
+        data: { status: nextStatus },
+      }),
+    ]);
+    invalidateStatsCache();
+  }
+
+  return { count: pendingIds.length, skipped };
 }
