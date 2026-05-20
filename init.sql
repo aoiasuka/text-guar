@@ -1,0 +1,252 @@
+-- =============================================================================
+-- 数据库初始化构建脚本 (MySQL 8.0+)
+-- 系统名称：文本内容管理与敏感信息审核系统 (Text Guard)
+-- 字符集：utf8mb4 (支持表情及完整中文字符集)
+-- =============================================================================
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- -----------------------------------------------------------------------------
+-- 1. 创建并使用数据库
+-- -----------------------------------------------------------------------------
+CREATE DATABASE IF NOT EXISTS `text_guard` 
+  DEFAULT CHARACTER SET utf8mb4 
+  COLLATE utf8mb4_unicode_ci;
+
+USE `text_guard`;
+
+-- -----------------------------------------------------------------------------
+-- 2. 清理旧表（若存在，按外键依赖逆序删除）
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS `operation_logs`;
+DROP TABLE IF EXISTS `reviews`;
+DROP TABLE IF EXISTS `contents`;
+DROP TABLE IF EXISTS `sensitive_words`;
+DROP TABLE IF EXISTS `users`;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- -----------------------------------------------------------------------------
+-- 3. 创建表结构
+-- -----------------------------------------------------------------------------
+
+-- 3.1 用户表 (users)
+CREATE TABLE `users` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT COMMENT '用户ID',
+  `username` VARCHAR(50) NOT NULL COMMENT '用户名（唯一）',
+  `password_hash` VARCHAR(255) NOT NULL COMMENT '加盐哈希密码',
+  `role` ENUM('admin', 'editor') NOT NULL DEFAULT 'editor' COMMENT '角色：管理员(admin)/编辑员(editor)',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+  
+  UNIQUE INDEX `users_username_key`(`username`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统用户表';
+
+-- 3.2 内容数据表 (contents)
+CREATE TABLE `contents` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT COMMENT '内容ID',
+  `title` VARCHAR(200) NOT NULL COMMENT '内容标题',
+  `body` TEXT NOT NULL COMMENT '原始内容',
+  `filtered_body` TEXT NOT NULL COMMENT '敏感词过滤替换后的内容',
+  `category` VARCHAR(50) NOT NULL DEFAULT '' COMMENT '内容分类',
+  `status` ENUM('draft', 'pending', 'published', 'rejected') NOT NULL DEFAULT 'draft' COMMENT '状态：草稿(draft)/待审核(pending)/已发布(published)/驳回(rejected)',
+  `risk_level` ENUM('low', 'medium', 'high') NULL COMMENT '风险等级：低(low)/中(medium)/高(high)',
+  `risk_score` INTEGER NOT NULL DEFAULT 0 COMMENT '风险总评分',
+  `detection_result` JSON NULL COMMENT '敏感词详细匹配和策略的 JSON 报告',
+  `is_pinned` BOOLEAN NOT NULL DEFAULT false COMMENT '是否置顶',
+  `author_id` INTEGER NOT NULL COMMENT '作者用户ID',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
+
+  INDEX `contents_status_created_at_idx`(`status`, `created_at`),
+  INDEX `contents_risk_level_idx`(`risk_level`),
+  INDEX `contents_author_id_status_idx`(`author_id`, `status`),
+  INDEX `contents_category_idx`(`category`),
+  INDEX `contents_is_pinned_created_at_idx`(`is_pinned`, `created_at`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='内容文章表';
+
+-- 3.3 敏感词库表 (sensitive_words)
+CREATE TABLE `sensitive_words` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT COMMENT '敏感词ID',
+  `word` VARCHAR(100) NOT NULL COMMENT '敏感词条',
+  `risk_level` ENUM('low', 'medium', 'high') NOT NULL COMMENT '风险等级：低(low)/中(medium)/高(high)',
+  `replacement` VARCHAR(100) NOT NULL DEFAULT '***' COMMENT '替换词/脱敏显示词',
+  `category` VARCHAR(50) NOT NULL DEFAULT '' COMMENT '敏感词分类',
+  `enabled` BOOLEAN NOT NULL DEFAULT true COMMENT '是否启用',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+
+  UNIQUE INDEX `sensitive_words_word_key`(`word`),
+  INDEX `sensitive_words_enabled_idx`(`enabled`),
+  INDEX `sensitive_words_enabled_risk_level_idx`(`enabled`, `risk_level`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='敏感词库';
+
+-- 3.4 内容审核表 (reviews)
+CREATE TABLE `reviews` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT COMMENT '审核记录ID',
+  `content_id` INTEGER NOT NULL COMMENT '被审核内容ID',
+  `reviewer_id` INTEGER NOT NULL COMMENT '审核员ID (关联用户id)',
+  `action` ENUM('approve', 'reject') NOT NULL COMMENT '审核操作：通过(approve)/驳回(reject)',
+  `comment` TEXT NULL COMMENT '审核批注/驳回意见',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '审核时间',
+
+  INDEX `reviews_content_id_idx`(`content_id`),
+  INDEX `reviews_reviewer_id_created_at_idx`(`reviewer_id`, `created_at`),
+  INDEX `reviews_action_created_at_idx`(`action`, `created_at`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='内容审核记录表';
+
+-- 3.5 操作审计日志表 (operation_logs)
+CREATE TABLE `operation_logs` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `user_id` INTEGER NOT NULL COMMENT '操作人ID',
+  `action` VARCHAR(50) NOT NULL COMMENT '动作类型',
+  `target_type` VARCHAR(50) NOT NULL COMMENT '操作对象模块',
+  `target_id` INTEGER NULL COMMENT '操作对象关联ID',
+  `detail` TEXT NULL COMMENT '详细操作载荷(JSON等)',
+  `ip` VARCHAR(45) NULL COMMENT '操作人IP地址',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录时间',
+
+  INDEX `operation_logs_user_id_created_at_idx`(`user_id`, `created_at`),
+  INDEX `operation_logs_action_created_at_idx`(`action`, `created_at`),
+  INDEX `operation_logs_target_type_target_id_idx`(`target_type`, `target_id`),
+  INDEX `operation_logs_created_at_idx`(`created_at`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统操作审计日志表';
+
+
+-- -----------------------------------------------------------------------------
+-- 4. 添加外键约束
+-- -----------------------------------------------------------------------------
+ALTER TABLE `contents` 
+  ADD CONSTRAINT `contents_author_id_fkey` 
+  FOREIGN KEY (`author_id`) REFERENCES `users`(`id`) 
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `reviews` 
+  ADD CONSTRAINT `reviews_content_id_fkey` 
+  FOREIGN KEY (`content_id`) REFERENCES `contents`(`id`) 
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `reviews` 
+  ADD CONSTRAINT `reviews_reviewer_id_fkey` 
+  FOREIGN KEY (`reviewer_id`) REFERENCES `users`(`id`) 
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE `operation_logs` 
+  ADD CONSTRAINT `operation_logs_user_id_fkey` 
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) 
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+
+-- -----------------------------------------------------------------------------
+-- 5. 初始化演示数据 (种子数据)
+-- -----------------------------------------------------------------------------
+START TRANSACTION;
+
+-- 5.1 注入系统默认用户 (管理员和编辑账号，密码均为 pbkdf2/bcrypt 强度10 哈希)
+-- admin / admin123
+-- editor / editor123
+INSERT INTO `users` (`id`, `username`, `password_hash`, `role`, `created_at`) VALUES
+(1, 'admin', '$2a$10$wcatoa1ojtYfUgipKw8fbuIF3AMs7Mk8U69Q9.XfQq8ksVtLjpk8e', 'admin', NOW(3)),
+(2, 'editor', '$2a$10$ZJNlAcZeDrMGlrIdAV0AZOD7WqilndrL2MSHlaRcnf2iLzos23gPe', 'editor', NOW(3));
+
+-- 5.2 注入系统初始化敏感词 (13 条)
+INSERT INTO `sensitive_words` (`id`, `word`, `risk_level`, `replacement`, `category`, `enabled`, `created_at`) VALUES
+(1, '泄密', 'high', '[保密信息]', '安全', true, NOW(3)),
+(2, '攻击', 'high', '***', '安全', true, NOW(3)),
+(3, '暴力', 'high', '***', '违规', true, NOW(3)),
+(4, '诈骗', 'high', '***', '违规', true, NOW(3)),
+(5, '赌博', 'high', '***', '违规', true, NOW(3)),
+(6, '违法', 'high', '***', '违规', true, NOW(3)),
+(7, '内部资料', 'medium', '[内部资料]', '保密', true, NOW(3)),
+(8, '客户名单', 'medium', '[客户名单]', '保密', true, NOW(3)),
+(9, '账号密码', 'medium', '[凭证]', '隐私', true, NOW(3)),
+(10, '转账', 'medium', '***', '金融', true, NOW(3)),
+(11, '推广', 'low', '***', '营销', true, NOW(3)),
+(12, '广告', 'low', '***', '营销', true, NOW(3)),
+(13, '测试敏感词', 'low', '***', '测试', true, NOW(3));
+
+-- 5.3 注入演示内容 (4 篇，覆盖各类状态与预置检测结果)
+INSERT INTO `contents` (`id`, `title`, `body`, `filtered_body`, `category`, `status`, `risk_level`, `risk_score`, `detection_result`, `is_pinned`, `author_id`, `created_at`, `updated_at`) VALUES
+(
+  1, 
+  '平台内容发布规范', 
+  '这是一篇正常的内容发布规范，适合直接提交审核。', 
+  '这是一篇正常的内容发布规范，适合直接提交审核。', 
+  '公告', 
+  'published', 
+  'low', 
+  0, 
+  '{"score": 0, "level": "low", "matches": [], "strategy": "replace", "summary": "未发现敏感信息", "filteredText": "这是一篇正常的内容发布规范，适合直接提交审核。"}' , 
+  false, 
+  2, 
+  NOW(3), 
+  NOW(3)
+),
+(
+  2, 
+  '活动推广文案', 
+  '本周活动推广内容包含广告字样，需要低风险替换。', 
+  '本周活动***内容包含***字样，需要低风险替换。', 
+  '营销', 
+  'draft', 
+  'low', 
+  10, 
+  '{"score": 10, "level": "low", "strategy": "replace", "summary": "命中 2 项风险，评分 10，建议策略：replace", "filteredText": "本周活动***内容包含***字样，需要低风险替换。", "matches": [{"end": 6, "type": "word", "word": "推广", "start": 4, "category": "营销", "riskLevel": "low", "replacement": "***"}, {"end": 13, "type": "word", "word": "广告", "start": 11, "category": "营销", "riskLevel": "low", "replacement": "***"}]}', 
+  false, 
+  2, 
+  NOW(3), 
+  NOW(3)
+),
+(
+  3, 
+  '客户资料处理说明', 
+  '文档中涉及客户名单和账号密码，需要管理员确认后再发布。', 
+  '文档中涉及[客户名单]和[凭证]，需要管理员确认后再发布。', 
+  '合规', 
+  'pending', 
+  'medium', 
+  30, 
+  '{"score": 30, "level": "medium", "strategy": "warn", "summary": "命中 2 项风险，评分 30，建议策略：warn", "filteredText": "文档中涉及[客户名单]和[凭证]，需要管理员确认后再发布。", "matches": [{"end": 10, "type": "word", "word": "客户名单", "start": 6, "category": "保密", "riskLevel": "medium", "replacement": "[客户名单]"}, {"end": 15, "type": "word", "word": "账号密码", "start": 11, "category": "隐私", "riskLevel": "medium", "replacement": "[凭证]"}]}', 
+  false, 
+  2, 
+  NOW(3), 
+  NOW(3)
+),
+(
+  4, 
+  '异常内容示例', 
+  '该内容包含泄密和攻击等高风险词，应拒绝发布。', 
+  '该内容包含[保密信息]和***等高风险词，应拒绝发布。', 
+  '安全', 
+  'rejected', 
+  'high', 
+  80, 
+  '{"score": 80, "level": "high", "strategy": "reject", "summary": "命中 2 项风险，评分 80，建议策略：reject", "filteredText": "该内容包含[保密信息]和***等高风险词，应拒绝发布。", "matches": [{"end": 8, "type": "word", "word": "泄密", "start": 6, "category": "安全", "riskLevel": "high", "replacement": "[保密信息]"}, {"end": 11, "type": "word", "word": "攻击", "start": 9, "category": "安全", "riskLevel": "high", "replacement": "***"}]}', 
+  false, 
+  2, 
+  NOW(3), 
+  NOW(3)
+);
+
+-- 5.4 记录初始化动作到操作审计日志
+INSERT INTO `operation_logs` (`id`, `user_id`, `action`, `target_type`, `target_id`, `detail`, `ip`, `created_at`) VALUES
+(
+  1, 
+  1, 
+  'seed', 
+  'system', 
+  NULL, 
+  '{"message": "初始化演示数据", "words": 13, "samples": 4}', 
+  '127.0.0.1', 
+  NOW(3)
+);
+
+COMMIT;
+
+-- =============================================================================
+-- 脚本执行完成
+-- =============================================================================
