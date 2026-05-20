@@ -57,7 +57,7 @@ const LLM_ENABLED = () => process.env.LLM_JUDGE_ENABLED === 'true';
 const OLLAMA_HOST = () => process.env.OLLAMA_HOST || 'http://localhost:11434';
 const MODEL = () => process.env.LLM_JUDGE_MODEL || 'gemma4:e2b';
 const TIMEOUT_MS = () => Number(process.env.LLM_JUDGE_TIMEOUT_MS || 30000);
-const MAX_PER_DETECTION = () => Number(process.env.LLM_JUDGE_MAX_PER_DETECTION || 3);
+const MAX_PER_DETECTION = () => Number(process.env.LLM_JUDGE_MAX_PER_DETECTION || 10);
 const CONTEXT_WINDOW = 80;
 
 interface CacheEntry {
@@ -286,19 +286,18 @@ function fallback(why: string): JudgeResult {
 
 export async function judgeUnsure(matches: DetectionMatch[], text: string): Promise<DetectionMatch[]> {
   if (!LLM_ENABLED()) return matches;
-  const candidateIdx: number[] = [];
-  matches.forEach((m, i) => {
-    const c = m.confidence ?? 1;
-    if (c >= 0.5 && c < 0.85) candidateIdx.push(i);
-  });
+  // 对所有命中（confidence ≥ 0.5，即未被规则层丢弃的）都调 AI 复核
+  // 低置信度命中已经被 detector.detect 内部的 CONFIDENCE_DROP_BELOW 过滤掉，到这里的全是有效命中
+  const candidateIdx: number[] = matches.map((_, i) => i);
   if (!candidateIdx.length) {
-    logInfo(`judgeUnsure: 无中等置信度命中跳过`);
+    logInfo(`judgeUnsure: 无命中跳过`);
     return matches;
   }
 
+  // 按 confidence 降序，命中数超过上限时优先复核最高的（更可能误判 sensitive 需要 AI 把关）
   candidateIdx.sort((a, b) => (matches[b].confidence ?? 1) - (matches[a].confidence ?? 1));
   const picked = candidateIdx.slice(0, MAX_PER_DETECTION());
-  logInfo(`judgeUnsure: 准备调 LLM ${picked.length} 次（候选 ${candidateIdx.length}，上限 ${MAX_PER_DETECTION()}）`);
+  logInfo(`judgeUnsure: 准备调 LLM ${picked.length} 次（命中总数 ${matches.length}，上限 ${MAX_PER_DETECTION()}）`);
 
   const verdicts = await Promise.all(
     picked.map(async (i) => {

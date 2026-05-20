@@ -18,7 +18,7 @@ export function statusController(_req: Request, res: Response) {
     model: process.env.LLM_JUDGE_MODEL || 'gemma4:e2b',
     host: process.env.OLLAMA_HOST || 'http://localhost:11434',
     timeoutMs: Number(process.env.LLM_JUDGE_TIMEOUT_MS || 30000),
-    maxPerDetection: Number(process.env.LLM_JUDGE_MAX_PER_DETECTION || 3),
+    maxPerDetection: Number(process.env.LLM_JUDGE_MAX_PER_DETECTION || 10),
   });
 }
 

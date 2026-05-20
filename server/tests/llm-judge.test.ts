@@ -103,27 +103,32 @@ describe('LLM 兜底 · Ollama HTTP API', () => {
     assert.match(out[0].reason ?? '', /judge_failed.*ECONNREFUSED/);
   });
 
-  it('confidence >= 0.85 的高置信度命中不触发 LLM', async () => {
+  it('confidence >= 0.85 的高置信度命中也会被复核（全量模式）', async () => {
     process.env.LLM_JUDGE_ENABLED = 'true';
     let called = 0;
     globalThis.fetch = (async () => {
       called += 1;
-      return new Response('{"response":"{}"}', { status: 200 });
+      return new Response(
+        JSON.stringify({ response: JSON.stringify({ verdict: 'sensitive', reason: '确实是风险' }) }),
+        { status: 200 },
+      );
     }) as typeof fetch;
 
     await judgeUnsure([mkMatch(0.9)], '他在赌博');
-    assert.equal(called, 0, '高置信度直接放过不调 LLM');
+    assert.equal(called, 1, '全量模式下高置信度命中也应被复核');
   });
 
-  it('confidence < 0.5 的低置信度也不调（已被主流程过滤）', async () => {
+  it('confidence < 0.5 的命中不会出现在 judgeUnsure 入参（已被规则层过滤）', async () => {
+    // 此场景实际由 detector.detect 内部的 CONFIDENCE_DROP_BELOW 过滤；
+    // judgeUnsure 假设入参全部 ≥ 0.5。若调用方传入低置信度，仍会照常调（不再人为屏蔽）
     process.env.LLM_JUDGE_ENABLED = 'true';
     let called = 0;
     globalThis.fetch = (async () => {
       called += 1;
-      return new Response('{"response":"{}"}', { status: 200 });
+      return new Response('{"response":"{\\"verdict\\":\\"neutral\\",\\"reason\\":\\"low\\"}"}', { status: 200 });
     }) as typeof fetch;
 
     await judgeUnsure([mkMatch(0.3)], '他在赌博');
-    assert.equal(called, 0);
+    assert.equal(called, 1, 'judgeUnsure 不再过滤入参，全部命中都调');
   });
 });

@@ -8,7 +8,7 @@
   - **三种匹配模式**：字面（literal）、自定义正则（regex，re2-wasm 编译杜绝 ReDoS）、内置凭证识别（credential，覆盖 AWS Key、JWT、SSH 私钥、API token、数据库连接串、bcrypt hash、中英文账密组合等 15+ 模板）
   - **上下文消歧**：用 jieba 分词识别复合词（攻击力 ≠ 攻击）、检测引号/代码块/反向劝阻关键词，给命中打 0-1 置信度而非二元命中
   - **规则治理**：每条规则带 version / baseConfidence / 正负样本，改一条规则可一键回归；命中事件全量入 `detection_events` 表，可按规则回溯
-  - **本地 AI 复核**（可选）：对中等置信度命中调本地 Gemma 4 e2b 二次判定，区分「确实敏感 / 中性提及 / 引用 / 反向劝阻」
+  - **本地 AI 复核**（可选）：每次检测的所有命中都送本地 Gemma 4 e2b 二次判定，区分「确实敏感 / 中性提及 / 引用 / 反向劝阻」，AI 判定可改写规则原始置信度
 - **审核流**：编辑提审 → 管理员通过/驳回，附操作审计日志
 - **报表导出**：Word（关键指标 + 高风险列表）、Excel（全量明细）
 
@@ -138,7 +138,7 @@ npx prisma generate
 
 ## 启用本地 AI 复核（可选）
 
-对中等置信度命中（0.5–0.85）调本地 Gemma 4 e2b 二次判定，输出 `sensitive / neutral / quote / reverse`，前端紫色「AI 复核」角标显示。完全离线、零调用成本。
+对每次检测的全部命中调本地 Gemma 4 e2b 二次判定，输出 `sensitive / neutral / quote / reverse`，前端紫色「AI 复核」角标显示。完全离线、零调用成本。
 
 ```pwsh
 # 1. 安装 Ollama

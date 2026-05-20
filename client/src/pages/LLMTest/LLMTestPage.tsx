@@ -32,7 +32,7 @@ const PRESETS: Array<{ label: string; text: string; expect: string }> = [
   {
     label: '中性提及（攻击力）',
     text: '这款游戏角色攻击力很强，但操作难度也大。',
-    expect: '期望：触发字面命中"攻击"，jieba 复合词降权 + AI 复核 neutral，最终被丢弃',
+    expect: '期望：触发字面命中"攻击"（confidence=1.0），AI 复核判 neutral 后降权到 0.3 被丢弃',
   },
   {
     label: '反向劝阻',
@@ -450,7 +450,7 @@ export function LLMTestPage() {
                       ·「最终置信度」= 若 AI 介入则按 verdict 改写，否则等于规则置信度。
                     </Typography.Text>
                     <Typography.Text>
-                      AI 仅对规则置信度 ∈ [0.5, 0.85) 的命中触发，每次检测最多 {result.llm.tracesCount} 条/次。
+                      AI 复核启用时，每条命中（confidence ≥ 0.5，未被规则层过滤的）都会送 AI 判定，每次检测最多并发 {result.llm.tracesCount} 条；超出按规则置信度降序优先复核。
                     </Typography.Text>
                     <Typography.Text strong style={{ marginTop: 8 }}>verdict 改写规则：</Typography.Text>
                     <Space wrap>
