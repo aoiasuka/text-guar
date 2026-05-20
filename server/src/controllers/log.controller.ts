@@ -14,5 +14,5 @@ export const logQuerySchema = z.object({
 });
 
 export async function listController(req: Request, res: Response) {
-  return ok(res, await listLogs(req.query as never));
+  return ok(res, await listLogs(req.query as never, req.dataScope));
 }

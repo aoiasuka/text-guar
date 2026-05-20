@@ -1,41 +1,71 @@
 import { Router } from 'express';
 import { auth } from '../middlewares/auth.middleware.js';
-import { requireRole } from '../middlewares/role.middleware.js';
+import { dataScope, requirePermission } from '../middlewares/permission.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import { asyncHandler as wrap } from '../utils/async.js';
 import * as ctrl from '../controllers/content.controller.js';
 
 const router = Router();
 
-const writer = [auth, requireRole('editor', 'admin')] as const;
-
-router.get('/', auth, validate(ctrl.pageQuerySchema, 'query'), wrap(ctrl.listController));
-router.post('/detect', ...writer, validate(ctrl.detectSchema), wrap(ctrl.detectController));
-router.get('/:id', auth, validate(ctrl.idParamSchema, 'params'), wrap(ctrl.detailController));
-router.post('/', ...writer, validate(ctrl.contentSchema), wrap(ctrl.createController));
+router.get(
+  '/',
+  auth,
+  requirePermission('content:list'),
+  dataScope('content'),
+  validate(ctrl.pageQuerySchema, 'query'),
+  wrap(ctrl.listController),
+);
+router.post(
+  '/detect',
+  auth,
+  requirePermission('content:detect'),
+  validate(ctrl.detectSchema),
+  wrap(ctrl.detectController),
+);
+router.get(
+  '/:id',
+  auth,
+  requirePermission('content:detail'),
+  dataScope('content'),
+  validate(ctrl.idParamSchema, 'params'),
+  wrap(ctrl.detailController),
+);
+router.post(
+  '/',
+  auth,
+  requirePermission('content:create'),
+  validate(ctrl.contentSchema),
+  wrap(ctrl.createController),
+);
 router.put(
   '/:id',
-  ...writer,
+  auth,
+  requirePermission('content:update'),
+  dataScope('content'),
   validate(ctrl.idParamSchema, 'params'),
   validate(ctrl.contentSchema),
   wrap(ctrl.updateController),
 );
 router.delete(
   '/:id',
-  ...writer,
+  auth,
+  requirePermission('content:delete'),
+  dataScope('content'),
   validate(ctrl.idParamSchema, 'params'),
   wrap(ctrl.deleteController),
 );
 router.patch(
   '/:id/submit',
-  ...writer,
+  auth,
+  requirePermission('content:submit'),
+  dataScope('content'),
   validate(ctrl.idParamSchema, 'params'),
   wrap(ctrl.submitController),
 );
 router.patch(
   '/:id/pin',
   auth,
-  requireRole('admin'),
+  requirePermission('content:pin'),
   validate(ctrl.idParamSchema, 'params'),
   validate(ctrl.pinSchema),
   wrap(ctrl.pinController),

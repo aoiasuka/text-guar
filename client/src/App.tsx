@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { BrowserRouter } from 'react-router-dom';
 import { AppLayout } from '@/components/Layout/AppLayout.js';
 import { AuthGuard } from '@/components/Layout/AuthGuard.js';
+import { RequirePermission } from '@/components/RequirePermission.js';
 import { ErrorBoundary } from '@/components/ErrorBoundary.js';
 import { LoginPage } from '@/pages/Login/LoginPage.js';
 import { DashboardPage } from '@/pages/Dashboard/DashboardPage.js';
@@ -25,15 +26,35 @@ export default function App() {
             <Route element={<AppLayout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/contents" element={<ContentListPage />} />
-              <Route path="/contents/create" element={<ContentFormPage />} />
-              <Route path="/contents/:id/edit" element={<ContentFormPage />} />
-              <Route path="/contents/:id" element={<ContentDetailPage />} />
-              <Route path="/sensitive-words" element={<SensitiveWordsPage />} />
-              <Route path="/review" element={<ReviewListPage />} />
-              <Route path="/review/:id" element={<ReviewDetailPage />} />
-              <Route path="/reports" element={<ReportsPage />} />
-              <Route path="/logs" element={<LogsPage />} />
+
+              <Route element={<RequirePermission code="content:list" />}>
+                <Route path="/contents" element={<ContentListPage />} />
+                <Route path="/contents/:id" element={<ContentDetailPage />} />
+              </Route>
+              <Route element={<RequirePermission code="content:create" />}>
+                <Route path="/contents/create" element={<ContentFormPage />} />
+              </Route>
+              <Route element={<RequirePermission code="content:update" />}>
+                <Route path="/contents/:id/edit" element={<ContentFormPage />} />
+              </Route>
+
+              <Route element={<RequirePermission code="sensitive:list" />}>
+                <Route path="/sensitive-words" element={<SensitiveWordsPage />} />
+              </Route>
+
+              <Route element={<RequirePermission code="review:pending" />}>
+                <Route path="/review" element={<ReviewListPage />} />
+                <Route path="/review/:id" element={<ReviewDetailPage />} />
+              </Route>
+
+              <Route element={<RequirePermission code="report:stats" />}>
+                <Route path="/reports" element={<ReportsPage />} />
+              </Route>
+
+              <Route element={<RequirePermission code="log:list" />}>
+                <Route path="/logs" element={<LogsPage />} />
+              </Route>
+
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Route>

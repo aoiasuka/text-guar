@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/prisma.js';
+import type { DataScopeLevel } from './permission.service.js';
 
 type LogInput = {
   userId: number;
@@ -44,23 +45,34 @@ function parseDetail(value: string | null) {
   }
 }
 
-export async function listLogs(query: {
-  page: number;
-  pageSize: number;
-  action?: string;
-  userId?: number;
-  targetType?: string;
-  startAt?: Date;
-  endAt?: Date;
-}) {
+export interface LogScope {
+  scope: DataScopeLevel;
+  ownerId: number;
+}
+
+export async function listLogs(
+  query: {
+    page: number;
+    pageSize: number;
+    action?: string;
+    userId?: number;
+    targetType?: string;
+    startAt?: Date;
+    endAt?: Date;
+  },
+  scope?: LogScope,
+) {
   const createdAt: Prisma.DateTimeFilter | undefined =
     query.startAt || query.endAt
       ? { gte: query.startAt, lte: query.endAt }
       : undefined;
 
+  const effectiveUserId =
+    scope && scope.scope === 'own' ? scope.ownerId : query.userId;
+
   const where: Prisma.OperationLogWhereInput = {
     action: query.action ? { contains: query.action } : undefined,
-    userId: query.userId,
+    userId: effectiveUserId,
     targetType: query.targetType,
     createdAt,
   };

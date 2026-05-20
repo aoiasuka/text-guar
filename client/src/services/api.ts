@@ -1,7 +1,9 @@
 import type { DetectionResult, RiskLevel } from '@text-guard/shared';
 import request from './request.js';
 import type {
+  AuthSession,
   Content,
+  MenuNode,
   OperationLog,
   PageResult,
   SensitiveWord,
@@ -11,8 +13,11 @@ import type {
 
 export const authApi = {
   login: (data: { username: string; password: string }) =>
-    request.post<{ token: string; user: User }>('/auth/login', data),
-  profile: () => request.get<User>('/auth/profile'),
+    request.post<AuthSession>('/auth/login', data),
+  profile: () =>
+    request.get<{ user: User; permissions: string[]; menus: MenuNode[] }>('/auth/profile'),
+  menu: () => request.get<MenuNode[]>('/auth/menu'),
+  permissions: () => request.get<string[]>('/auth/permissions'),
 };
 
 export const contentApi = {
@@ -28,12 +33,13 @@ export const contentApi = {
   detect: (text: string) => request.post<DetectionResult>('/contents/detect', { text }),
 };
 
+export type SensitiveWordPayload = Omit<SensitiveWord, 'id' | 'enabled' | 'createdAt'>;
+
 export const sensitiveApi = {
   list: (params?: Record<string, unknown>) =>
     request.get<PageResult<SensitiveWord>>('/sensitive-words', { params }),
-  create: (data: Omit<SensitiveWord, 'id' | 'enabled' | 'createdAt'>) =>
-    request.post<SensitiveWord>('/sensitive-words', data),
-  update: (id: number, data: Omit<SensitiveWord, 'id' | 'enabled' | 'createdAt'>) =>
+  create: (data: SensitiveWordPayload) => request.post<SensitiveWord>('/sensitive-words', data),
+  update: (id: number, data: SensitiveWordPayload) =>
     request.put<SensitiveWord>(`/sensitive-words/${id}`, data),
   toggle: (id: number, enabled: boolean) =>
     request.patch<SensitiveWord>(`/sensitive-words/${id}/toggle`, { enabled }),

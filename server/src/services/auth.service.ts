@@ -3,22 +3,41 @@ import type { Role } from '@text-guard/shared';
 import { prisma } from '../utils/prisma.js';
 import { signToken } from '../utils/jwt.js';
 import { HttpError } from '../utils/errors.js';
+import { getMenusByRole, getPermissionsByRole, type MenuNode } from './permission.service.js';
 
-export async function login(username: string, password: string) {
+export interface AuthSession {
+  token: string;
+  user: {
+    id: number;
+    username: string;
+    role: Role;
+    createdAt: string;
+  };
+  permissions: string[];
+  menus: MenuNode[];
+}
+
+export async function login(username: string, password: string): Promise<AuthSession | null> {
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user) return null;
 
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return null;
 
+  const role = user.role as Role;
   const profile = {
     id: user.id,
     username: user.username,
-    role: user.role as Role,
+    role,
     createdAt: user.createdAt.toISOString(),
   };
 
-  return { token: signToken(profile), user: profile };
+  const [permissions, menus] = await Promise.all([
+    getPermissionsByRole(role),
+    getMenusByRole(role),
+  ]);
+
+  return { token: signToken(profile), user: profile, permissions, menus };
 }
 
 export async function register(input: { username: string; password: string; role: Role }) {

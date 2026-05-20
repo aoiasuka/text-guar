@@ -26,7 +26,12 @@ export function LoginPage() {
             initialValues={{ username: 'admin', password: 'admin123' }}
             onFinish={async (values) => {
               const result = await authApi.login(values);
-              setSession(result.token, result.user);
+              setSession({
+                token: result.token,
+                user: result.user,
+                permissions: result.permissions,
+                menus: result.menus,
+              });
               message.success('登录成功');
               const redirect = searchParams.get('redirect');
               navigate(redirect && redirect.startsWith('/') ? redirect : '/dashboard', { replace: true });

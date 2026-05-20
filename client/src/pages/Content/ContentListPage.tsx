@@ -7,6 +7,8 @@ import { contentApi } from '@/services/api.js';
 import type { Content } from '@/types/index.js';
 import { RiskTag } from '@/components/RiskTag.js';
 import { StatusTag } from '@/components/StatusTag.js';
+import { Permission } from '@/components/Permission.js';
+import { usePermission } from '@/hooks/usePermission.js';
 
 const STATUS_VALUES = ['draft', 'pending', 'published', 'rejected'] as const;
 const RISK_VALUES = ['low', 'medium', 'high'] as const;
@@ -50,6 +52,7 @@ export function ContentListPage() {
   const [data, setData] = useState<Content[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const perm = usePermission();
 
   const query = useMemo(() => parseQuery(searchParams), [searchParams]);
 
@@ -81,15 +84,19 @@ export function ContentListPage() {
     void load();
   }, [query, form, load]);
 
+  const hasRowActions = perm.hasAny('content:detail', 'content:update', 'content:submit', 'content:delete');
+
   return (
     <Card
       title="内容管理"
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/contents/create')}>
-            新建内容
-          </Button>
+          <Permission code="content:create">
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/contents/create')}>
+              新建内容
+            </Button>
+          </Permission>
         </Space>
       }
     >
@@ -167,45 +174,57 @@ export function ContentListPage() {
           { title: '风险', dataIndex: 'riskLevel', render: (value) => <RiskTag level={value} />, width: 110 },
           { title: '风险分', dataIndex: 'riskScore', width: 90 },
           { title: '更新时间', dataIndex: 'updatedAt', render: (value) => dayjs(value).format('MM-DD HH:mm'), width: 130 },
-          {
-            title: '操作',
-            width: 260,
-            render: (_, record) => (
-              <Space>
-                <Button size="small" onClick={() => navigate(`/contents/${record.id}`)}>
-                  预览
-                </Button>
-                <Button size="small" onClick={() => navigate(`/contents/${record.id}/edit`)}>
-                  编辑
-                </Button>
-                <Button
-                  size="small"
-                  onClick={async () => {
-                    const result = await contentApi.submit(record.id);
-                    if (result.rejected) {
-                      message.warning('检测为高风险，已自动驳回');
-                    } else {
-                      message.success('已提交审核');
-                    }
-                    load();
-                  }}
-                >
-                  提审
-                </Button>
-                <Popconfirm
-                  title="确认删除？"
-                  onConfirm={async () => {
-                    await contentApi.remove(record.id);
-                    load();
-                  }}
-                >
-                  <Button size="small" danger>
-                    删除
-                  </Button>
-                </Popconfirm>
-              </Space>
-            ),
-          },
+          ...(hasRowActions
+            ? [
+                {
+                  title: '操作',
+                  width: 260,
+                  render: (_: unknown, record: Content) => (
+                    <Space>
+                      <Permission code="content:detail">
+                        <Button size="small" onClick={() => navigate(`/contents/${record.id}`)}>
+                          预览
+                        </Button>
+                      </Permission>
+                      <Permission code="content:update">
+                        <Button size="small" onClick={() => navigate(`/contents/${record.id}/edit`)}>
+                          编辑
+                        </Button>
+                      </Permission>
+                      <Permission code="content:submit">
+                        <Button
+                          size="small"
+                          onClick={async () => {
+                            const result = await contentApi.submit(record.id);
+                            if (result.rejected) {
+                              message.warning('检测为高风险，已自动驳回');
+                            } else {
+                              message.success('已提交审核');
+                            }
+                            load();
+                          }}
+                        >
+                          提审
+                        </Button>
+                      </Permission>
+                      <Permission code="content:delete">
+                        <Popconfirm
+                          title="确认删除？"
+                          onConfirm={async () => {
+                            await contentApi.remove(record.id);
+                            load();
+                          }}
+                        >
+                          <Button size="small" danger>
+                            删除
+                          </Button>
+                        </Popconfirm>
+                      </Permission>
+                    </Space>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     </Card>

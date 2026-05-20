@@ -102,4 +102,70 @@ describe('SensitiveDetector', () => {
     assert.equal(result.strategy, 'reject');
     assert.equal(result.level, 'high');
   });
+
+  it('detects regex sensitive words with custom pattern', () => {
+    const detector = new SensitiveDetector();
+    detector.rebuild([
+      {
+        word: '弱密码',
+        matchType: 'regex',
+        pattern: '(?i)password\\s*[:=]\\s*(?:admin|admin123|123456)',
+        riskLevel: 'high',
+        replacement: '[弱密码]',
+        category: '隐私',
+      },
+    ]);
+    const result = detector.detect('config: password=admin123');
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].riskLevel, 'high');
+    assert.match(result.matches[0].word, /password=admin/i);
+  });
+
+  it('detects credential combinations like admin/admin123 via credential mode', () => {
+    const detector = new SensitiveDetector();
+    detector.rebuild([
+      {
+        word: '账号密码',
+        matchType: 'credential',
+        riskLevel: 'medium',
+        replacement: '[凭证]',
+        category: '隐私',
+      },
+    ]);
+    const result = detector.detect('please use admin/admin123 to log in');
+    assert.ok(result.matches.length > 0, 'should match credential combination');
+    assert.equal(result.matches[0].replacement, '[凭证]');
+    assert.equal(result.matches[0].category, '隐私');
+  });
+
+  it('detects Chinese credential phrasing via credential mode', () => {
+    const detector = new SensitiveDetector();
+    detector.rebuild([
+      {
+        word: '账号密码',
+        matchType: 'credential',
+        riskLevel: 'medium',
+        replacement: '[凭证]',
+        category: '隐私',
+      },
+    ]);
+    const result = detector.detect('登录时使用 账号 admin 密码 admin123 即可');
+    assert.ok(result.matches.length > 0, 'should match Chinese credential phrasing');
+  });
+
+  it('does not flag plain text "账号密码" when only credential mode is enabled', () => {
+    const detector = new SensitiveDetector();
+    detector.rebuild([
+      {
+        word: '账号密码',
+        matchType: 'credential',
+        riskLevel: 'medium',
+        replacement: '[凭证]',
+        category: '隐私',
+      },
+    ]);
+    // 字面四字不再单独命中（这是 credential 模式的设计意图）
+    const result = detector.detect('文档中涉及账号密码字样');
+    assert.equal(result.matches.length, 0);
+  });
 });

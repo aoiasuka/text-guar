@@ -34,11 +34,11 @@ export const detectSchema = z.object({ text: z.string().min(1) });
 export const pinSchema = z.object({ isPinned: z.boolean() });
 
 export async function listController(req: Request, res: Response) {
-  return ok(res, await listContents(req.query as never));
+  return ok(res, await listContents(req.query as never, req.dataScope));
 }
 
 export async function detailController(req: Request, res: Response) {
-  return ok(res, await getContent(Number(req.params.id)));
+  return ok(res, await getContent(Number(req.params.id), req.dataScope));
 }
 
 export async function createController(req: Request, res: Response) {
@@ -55,7 +55,7 @@ export async function createController(req: Request, res: Response) {
 }
 
 export async function updateController(req: Request, res: Response) {
-  const content = await updateContent(Number(req.params.id), req.body);
+  const content = await updateContent(Number(req.params.id), req.body, req.dataScope);
   writeLog({
     userId: req.user!.id,
     action: 'update_content',
@@ -68,7 +68,7 @@ export async function updateController(req: Request, res: Response) {
 
 export async function deleteController(req: Request, res: Response) {
   const id = Number(req.params.id);
-  await deleteContent(id);
+  await deleteContent(id, req.dataScope);
   writeLog({
     userId: req.user!.id,
     action: 'delete_content',
@@ -81,7 +81,7 @@ export async function deleteController(req: Request, res: Response) {
 
 export async function submitController(req: Request, res: Response) {
   const id = Number(req.params.id);
-  const result = await submitContent(id);
+  const result = await submitContent(id, req.dataScope);
   writeLog({
     userId: req.user!.id,
     action: result.rejected ? 'submit_content_rejected_by_detector' : 'submit_content',

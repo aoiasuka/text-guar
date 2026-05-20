@@ -63,17 +63,26 @@ enum RiskLevel {
   high
 }
 
+enum SensitiveMatchType {
+  literal
+  regex
+  credential
+}
+
 model SensitiveWord {
-  id          Int       @id @default(autoincrement())
-  word        String    @unique @db.VarChar(100)
-  riskLevel   RiskLevel @map("risk_level")
-  replacement String    @default("***") @db.VarChar(100)
-  category    String    @default("") @db.VarChar(50)
-  enabled     Boolean   @default(true)
-  createdAt   DateTime  @default(now()) @map("created_at")
+  id          Int                @id @default(autoincrement())
+  word        String             @unique @db.VarChar(200)
+  matchType   SensitiveMatchType @default(literal) @map("match_type")
+  pattern     String?            @db.VarChar(500)
+  riskLevel   RiskLevel          @map("risk_level")
+  replacement String             @default("***") @db.VarChar(100)
+  category    String             @default("") @db.VarChar(50)
+  enabled     Boolean            @default(true)
+  createdAt   DateTime           @default(now()) @map("created_at")
 
   @@index([enabled])
   @@index([enabled, riskLevel])
+  @@index([enabled, matchType])
   @@map("sensitive_words")
 }
 
@@ -114,4 +123,52 @@ model OperationLog {
   @@index([targetType, targetId])
   @@index([createdAt])
   @@map("operation_logs")
+}
+
+enum PermType {
+  menu
+  action
+  data
+}
+
+model Permission {
+  id          Int              @id @default(autoincrement())
+  code        String           @unique @db.VarChar(80)
+  name        String           @db.VarChar(80)
+  module      String           @db.VarChar(40)
+  type        PermType
+  description String?          @db.VarChar(200)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  rolePerms   RolePermission[]
+  menus       Menu[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  role         Role
+  permissionId Int        @map("permission_id")
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([role, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Menu {
+  id           Int         @id @default(autoincrement())
+  parentId     Int?        @map("parent_id")
+  parent       Menu?       @relation("MenuTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Menu[]      @relation("MenuTree")
+  name         String      @db.VarChar(40)
+  path         String      @db.VarChar(120)
+  icon         String?     @db.VarChar(40)
+  permissionId Int?        @map("permission_id")
+  permission   Permission? @relation(fields: [permissionId], references: [id], onDelete: SetNull)
+  sort         Int         @default(0)
+  visible      Boolean     @default(true)
+
+  @@index([parentId])
+  @@map("menus")
 }

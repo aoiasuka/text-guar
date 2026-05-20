@@ -1,11 +1,38 @@
 import type { DetectionMatch, DetectionResult, RiskLevel } from '@text-guard/shared';
 import { applyReplacement } from './filter.js';
+import { credentialPatterns } from './credential-rules.js';
 import { mapToOriginalRange, normalize } from './normalizer.js';
 import { scanByRegex } from './regex-rules.js';
 import { getFilterStrategy, getRiskLevel, riskWeight } from './risk-scorer.js';
 import { applyWhitelist } from './whitelist.js';
 
+export type SensitiveMatchMode = 'literal' | 'regex' | 'credential';
+
 export interface SensitiveWordEntry {
+  word: string;
+  matchType?: SensitiveMatchMode;
+  pattern?: string | null;
+  riskLevel: RiskLevel;
+  replacement: string;
+  category: string;
+}
+
+interface LiteralEntry {
+  word: string;
+  riskLevel: RiskLevel;
+  replacement: string;
+  category: string;
+}
+
+interface RegexEntry {
+  word: string;
+  regexp: RegExp;
+  riskLevel: RiskLevel;
+  replacement: string;
+  category: string;
+}
+
+interface CredentialMeta {
   word: string;
   riskLevel: RiskLevel;
   replacement: string;
@@ -15,7 +42,7 @@ export interface SensitiveWordEntry {
 interface TrieNode {
   next: Map<string, TrieNode>;
   fail?: TrieNode;
-  outputs: SensitiveWordEntry[];
+  outputs: LiteralEntry[];
 }
 
 function createNode(): TrieNode {
@@ -28,22 +55,68 @@ const MAX_CACHE_TEXT_LEN = 4096;
 const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 };
 
 export class SensitiveDetector {
-  private words: SensitiveWordEntry[] = [];
+  private literalWords: LiteralEntry[] = [];
+  private regexEntries: RegexEntry[] = [];
+  private credentialMeta: CredentialMeta | null = null;
   private root: TrieNode = createNode();
   private version = 0;
   private cache = new Map<string, DetectionResult>();
 
   rebuild(words: SensitiveWordEntry[]) {
-    this.words = [...words].sort((a, b) => b.word.length - a.word.length);
+    const literal: LiteralEntry[] = [];
+    const regex: RegexEntry[] = [];
+    let credentialBest: CredentialMeta | null = null;
+
+    for (const item of words) {
+      const matchType = item.matchType || 'literal';
+      if (matchType === 'literal') {
+        literal.push({
+          word: item.word,
+          riskLevel: item.riskLevel,
+          replacement: item.replacement,
+          category: item.category,
+        });
+      } else if (matchType === 'regex') {
+        if (!item.pattern) continue;
+        try {
+          regex.push({
+            word: item.word,
+            regexp: compileRegex(item.pattern),
+            riskLevel: item.riskLevel,
+            replacement: item.replacement,
+            category: item.category,
+          });
+        } catch (error) {
+          console.warn(
+            `[detector] 正则规则编译失败 word=${item.word} pattern=${item.pattern}：`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      } else if (matchType === 'credential') {
+        const meta: CredentialMeta = {
+          word: item.word,
+          riskLevel: item.riskLevel,
+          replacement: item.replacement || '[凭证]',
+          category: item.category,
+        };
+        if (!credentialBest || riskRank[meta.riskLevel] > riskRank[credentialBest.riskLevel]) {
+          credentialBest = meta;
+        }
+      }
+    }
+
+    this.literalWords = literal.sort((a, b) => b.word.length - a.word.length);
+    this.regexEntries = regex;
+    this.credentialMeta = credentialBest;
     this.root = createNode();
-    for (const word of this.words) this.insert(word);
+    for (const word of this.literalWords) this.insertLiteral(word);
     this.buildFailureLinks();
     this.version += 1;
     this.cache.clear();
   }
 
   get size() {
-    return this.words.length;
+    return this.literalWords.length + this.regexEntries.length + (this.credentialMeta ? 1 : 0);
   }
 
   detect(text: string): DetectionResult {
@@ -56,9 +129,11 @@ export class SensitiveDetector {
     }
 
     const normalized = normalize(text);
-    const wordMatches = this.scanWords(text, normalized);
+    const wordMatches = this.scanLiterals(text, normalized);
     const regexMatches = scanByRegex(text);
-    const all = [...wordMatches, ...regexMatches];
+    const customRegexMatches = this.scanCustomRegex(text);
+    const credentialMatches = this.scanCredentials(text);
+    const all = [...wordMatches, ...regexMatches, ...customRegexMatches, ...credentialMatches];
     const merged = mergeOverlapping(all, text);
     const filtered = applyWhitelist(text, merged);
     const score = filtered.reduce((sum, item) => sum + riskWeight[item.riskLevel], 0);
@@ -88,11 +163,11 @@ export class SensitiveDetector {
     return result;
   }
 
-  private scanWords(
+  private scanLiterals(
     original: string,
     normalized: ReturnType<typeof normalize>,
   ): DetectionMatch[] {
-    if (this.words.length === 0) return [];
+    if (this.literalWords.length === 0) return [];
 
     const matches: DetectionMatch[] = [];
     let node = this.root;
@@ -125,7 +200,52 @@ export class SensitiveDetector {
     return matches;
   }
 
-  private insert(item: SensitiveWordEntry) {
+  private scanCustomRegex(text: string): DetectionMatch[] {
+    if (this.regexEntries.length === 0) return [];
+    const matches: DetectionMatch[] = [];
+    for (const rule of this.regexEntries) {
+      rule.regexp.lastIndex = 0;
+      for (const hit of text.matchAll(rule.regexp)) {
+        const raw = hit[0];
+        const start = hit.index ?? 0;
+        matches.push({
+          type: 'regex',
+          word: raw,
+          riskLevel: rule.riskLevel,
+          category: rule.category,
+          replacement: rule.replacement || '***',
+          start,
+          end: start + raw.length,
+        });
+      }
+    }
+    return matches;
+  }
+
+  private scanCredentials(text: string): DetectionMatch[] {
+    if (!this.credentialMeta) return [];
+    const meta = this.credentialMeta;
+    const matches: DetectionMatch[] = [];
+    for (const pattern of credentialPatterns) {
+      pattern.lastIndex = 0;
+      for (const hit of text.matchAll(pattern)) {
+        const raw = hit[0];
+        const start = hit.index ?? 0;
+        matches.push({
+          type: 'regex',
+          word: raw,
+          riskLevel: meta.riskLevel,
+          category: meta.category,
+          replacement: meta.replacement,
+          start,
+          end: start + raw.length,
+        });
+      }
+    }
+    return matches;
+  }
+
+  private insertLiteral(item: LiteralEntry) {
     let node = this.root;
     for (const char of item.word.toLowerCase()) {
       const next = node.next.get(char) || createNode();
@@ -157,6 +277,16 @@ export class SensitiveDetector {
   }
 }
 
+function compileRegex(pattern: string): RegExp {
+  const flagMatch = /^\(\?([imsu]+)\)/.exec(pattern);
+  if (flagMatch) {
+    const flags = flagMatch[1];
+    const body = pattern.slice(flagMatch[0].length);
+    return new RegExp(body, `${flags}g`);
+  }
+  return new RegExp(pattern, 'g');
+}
+
 function compareForMerge(a: DetectionMatch, b: DetectionMatch) {
   if (a.start !== b.start) return a.start - b.start;
   if (a.end !== b.end) return b.end - a.end;
@@ -174,7 +304,6 @@ export function mergeOverlapping(matches: DetectionMatch[], text?: string): Dete
       result.push(match);
       continue;
     }
-    // Overlap: union the span; keep meta of higher risk (tie-break by longer span)
     const unionStart = Math.min(last.start, match.start);
     const unionEnd = Math.max(last.end, match.end);
     const matchRank = riskRank[match.riskLevel];

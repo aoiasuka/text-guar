@@ -1,10 +1,22 @@
 import type { ContentStatus, DetectionResult, RiskLevel, Role } from '@text-guard/shared';
 
+export type SensitiveMatchType = 'literal' | 'regex' | 'credential';
+
 export interface User {
   id: number;
   username: string;
   role: Role;
   createdAt: string;
+}
+
+export interface MenuNode {
+  id: number;
+  name: string;
+  path: string;
+  icon: string | null;
+  sort: number;
+  permissionCode: string | null;
+  children: MenuNode[];
 }
 
 export interface Content {
@@ -32,6 +44,8 @@ export interface SubmitContentResult {
 export interface SensitiveWord {
   id: number;
   word: string;
+  matchType: SensitiveMatchType;
+  pattern?: string | null;
   riskLevel: RiskLevel;
   replacement: string;
   category: string;
@@ -55,4 +69,11 @@ export interface PageResult<T> {
   total: number;
   page: number;
   pageSize: number;
+}
+
+export interface AuthSession {
+  token: string;
+  user: User;
+  permissions: string[];
+  menus: MenuNode[];
 }

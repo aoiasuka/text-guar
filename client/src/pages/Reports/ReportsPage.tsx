@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { reportApi } from '@/services/api.js';
 import { useAuthStore } from '@/stores/useAuthStore.js';
 import { RiskPieChart } from '@/components/RiskPieChart.js';
+import { Permission } from '@/components/Permission.js';
 import type { RiskLevel } from '@text-guard/shared';
 
 const riskColor: Record<RiskLevel, string> = {
@@ -71,22 +72,24 @@ export function ReportsPage() {
             title="导出报表"
             loading={!stats}
             extra={
-              <Space>
-                <Button
-                  icon={<DownloadOutlined />}
-                  loading={downloading === 'word'}
-                  onClick={() => download('word')}
-                >
-                  Word 报告
-                </Button>
-                <Button
-                  icon={<DownloadOutlined />}
-                  loading={downloading === 'excel'}
-                  onClick={() => download('excel')}
-                >
-                  Excel 报表
-                </Button>
-              </Space>
+              <Permission code="report:export">
+                <Space>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    loading={downloading === 'word'}
+                    onClick={() => download('word')}
+                  >
+                    Word 报告
+                  </Button>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    loading={downloading === 'excel'}
+                    onClick={() => download('excel')}
+                  >
+                    Excel 报表
+                  </Button>
+                </Space>
+              </Permission>
             }
           >
             <Space direction="vertical" size={8} className="full">

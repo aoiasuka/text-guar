@@ -8,6 +8,7 @@ import { DetectResult } from '@/components/DetectResult.js';
 import { HighlightedText } from '@/components/HighlightedText.js';
 import { RiskTag } from '@/components/RiskTag.js';
 import { StatusTag } from '@/components/StatusTag.js';
+import { Permission } from '@/components/Permission.js';
 
 export function ContentDetailPage() {
   const { id } = useParams();
@@ -38,7 +39,9 @@ export function ContentDetailPage() {
         title={content.title}
         extra={
           <Space>
-            <Button onClick={() => navigate(`/contents/${content.id}/edit`)}>编辑</Button>
+            <Permission code="content:update">
+              <Button onClick={() => navigate(`/contents/${content.id}/edit`)}>编辑</Button>
+            </Permission>
             <Button onClick={() => navigate('/contents')}>返回</Button>
           </Space>
         }

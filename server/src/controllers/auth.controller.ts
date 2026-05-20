@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { changePassword, login, register } from '../services/auth.service.js';
+import { getMenusByRole, getPermissionsByRole } from '../services/permission.service.js';
 import { writeLog } from '../services/log.service.js';
 import { fail, ok } from '../utils/response.js';
 
@@ -46,8 +47,21 @@ export async function registerController(req: Request, res: Response) {
   return ok(res, user);
 }
 
-export function profileController(req: Request, res: Response) {
-  return ok(res, req.user);
+export async function profileController(req: Request, res: Response) {
+  const role = req.user!.role;
+  const [permissions, menus] = await Promise.all([
+    getPermissionsByRole(role),
+    getMenusByRole(role),
+  ]);
+  return ok(res, { user: req.user, permissions, menus });
+}
+
+export async function menuController(req: Request, res: Response) {
+  return ok(res, await getMenusByRole(req.user!.role));
+}
+
+export async function permissionsController(req: Request, res: Response) {
+  return ok(res, await getPermissionsByRole(req.user!.role));
 }
 
 export async function passwordController(req: Request, res: Response) {

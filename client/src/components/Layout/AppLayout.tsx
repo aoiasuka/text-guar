@@ -1,4 +1,5 @@
 import { Layout, Menu, Space, Typography, Button, Avatar } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   AuditOutlined,
   DashboardOutlined,
@@ -7,25 +8,39 @@ import {
   SafetyCertificateOutlined,
   BarChartOutlined,
   HistoryOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useMemo } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore.js';
+import type { MenuNode } from '@/types/index.js';
 
 const { Sider, Header, Content } = Layout;
 
-const items = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: '工作台' },
-  { key: '/contents', icon: <FileTextOutlined />, label: '内容管理' },
-  { key: '/sensitive-words', icon: <SafetyCertificateOutlined />, label: '敏感词库' },
-  { key: '/review', icon: <AuditOutlined />, label: '审核工作台' },
-  { key: '/reports', icon: <BarChartOutlined />, label: '审核报表' },
-  { key: '/logs', icon: <HistoryOutlined />, label: '操作日志' },
-];
+const iconMap: Record<string, JSX.Element> = {
+  DashboardOutlined: <DashboardOutlined />,
+  FileTextOutlined: <FileTextOutlined />,
+  SafetyCertificateOutlined: <SafetyCertificateOutlined />,
+  AuditOutlined: <AuditOutlined />,
+  BarChartOutlined: <BarChartOutlined />,
+  HistoryOutlined: <HistoryOutlined />,
+};
+
+function toMenuItems(nodes: MenuNode[]): MenuProps['items'] {
+  return nodes.map((node) => ({
+    key: node.path,
+    icon: (node.icon && iconMap[node.icon]) || <AppstoreOutlined />,
+    label: node.name,
+    children: node.children.length > 0 ? toMenuItems(node.children) : undefined,
+  }));
+}
 
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuthStore();
+  const { user, menus, logout } = useAuthStore();
+  const items = useMemo(() => toMenuItems(menus), [menus]);
+  const selectedKey = `/${location.pathname.split('/')[1] || 'dashboard'}`;
 
   return (
     <Layout className="shell">
@@ -40,7 +55,7 @@ export function AppLayout() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[`/${location.pathname.split('/')[1] || 'dashboard'}`]}
+          selectedKeys={[selectedKey]}
           items={items}
           onClick={(item) => navigate(item.key)}
         />

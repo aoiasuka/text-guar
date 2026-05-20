@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { SensitiveMatchType } from '@prisma/client';
 import { z } from 'zod';
 import {
   batchCreateSensitiveWords,
@@ -12,20 +13,48 @@ import {
 import { writeLog } from '../services/log.service.js';
 import { ok } from '../utils/response.js';
 
+const matchTypeEnum = z.nativeEnum(SensitiveMatchType);
+
 export const sensitiveQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(10),
   keyword: z.string().optional(),
   riskLevel: z.enum(['low', 'medium', 'high']).optional(),
   enabled: z.coerce.boolean().optional(),
+  matchType: matchTypeEnum.optional(),
 });
 
-export const sensitiveSchema = z.object({
-  word: z.string().min(1).max(100),
-  riskLevel: z.enum(['low', 'medium', 'high']),
-  replacement: z.string().max(100).default('***'),
-  category: z.string().max(50).default('默认'),
-});
+export const sensitiveSchema = z
+  .object({
+    word: z.string().min(1).max(200),
+    matchType: matchTypeEnum.default(SensitiveMatchType.literal),
+    pattern: z.string().max(500).optional(),
+    riskLevel: z.enum(['low', 'medium', 'high']),
+    replacement: z.string().max(100).default('***'),
+    category: z.string().max(50).default('默认'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.matchType === SensitiveMatchType.regex) {
+      if (!data.pattern || !data.pattern.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pattern'],
+          message: '正则模式下 pattern 必填',
+        });
+        return;
+      }
+      try {
+        const body = data.pattern.replace(/^\(\?[imsu]+\)/, '');
+        new RegExp(body);
+      } catch (error) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pattern'],
+          message: `正则不合法：${error instanceof Error ? error.message : '未知错误'}`,
+        });
+      }
+    }
+  });
 
 export const batchSchema = z.object({ items: z.array(sensitiveSchema).min(1) });
 export const toggleSchema = z.object({ enabled: z.boolean() });
@@ -45,7 +74,7 @@ export async function createController(req: Request, res: Response) {
     action: 'create_sensitive_word',
     targetType: 'sensitive_word',
     targetId: item.id,
-    detail: { word: item.word, riskLevel: item.riskLevel },
+    detail: { word: item.word, matchType: item.matchType, riskLevel: item.riskLevel },
     ip: req.ip,
   });
   return ok(res, item);
