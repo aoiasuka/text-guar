@@ -8,6 +8,7 @@ import * as ctrl from '../controllers/llm.controller.js';
 const router = Router();
 
 router.get('/status', auth, requirePermission('llm:test'), wrap(ctrl.statusController));
+router.get('/health', auth, requirePermission('llm:test'), wrap(ctrl.healthController));
 router.post('/test', auth, requirePermission('llm:test'), validate(ctrl.testSchema), wrap(ctrl.testController));
 
 export default router;

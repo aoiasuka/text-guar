@@ -3,24 +3,28 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Descriptions,
   Empty,
   Row,
   Space,
   Statistic,
+  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import {
   ApiOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
   ExperimentOutlined,
   RobotOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useCallback, useEffect, useState } from 'react';
 import { llmApi } from '@/services/api.js';
-import type { LLMStatus, LLMTestResult } from '@/types/index.js';
+import type { LLMHealth, LLMJudgeTrace, LLMTestResult } from '@/types/index.js';
 import { DetectResult } from '@/components/DetectResult.js';
 import { HighlightedText } from '@/components/HighlightedText.js';
 
@@ -28,7 +32,7 @@ const PRESETS: Array<{ label: string; text: string; expect: string }> = [
   {
     label: '中性提及（攻击力）',
     text: '这款游戏角色攻击力很强，但操作难度也大。',
-    expect: '期望：触发字面命中"攻击"，但 jieba 复合词降权 + AI 复核 neutral，最终被丢弃',
+    expect: '期望：触发字面命中"攻击"，jieba 复合词降权 + AI 复核 neutral，最终被丢弃',
   },
   {
     label: '反向劝阻',
@@ -62,21 +66,12 @@ const PRESETS: Array<{ label: string; text: string; expect: string }> = [
   },
 ];
 
-function verdictColor(v: string): string {
-  switch (v) {
-    case 'sensitive':
-      return 'red';
-    case 'neutral':
-      return 'default';
-    case 'quote':
-      return 'blue';
-    case 'reverse':
-      return 'green';
-    default:
-      return 'default';
-  }
-}
-
+const verdictTone: Record<string, string> = {
+  sensitive: 'red',
+  neutral: 'default',
+  quote: 'blue',
+  reverse: 'green',
+};
 const verdictLabel: Record<string, string> = {
   sensitive: '确认敏感',
   neutral: '中性',
@@ -85,18 +80,24 @@ const verdictLabel: Record<string, string> = {
 };
 
 export function LLMTestPage() {
-  const [status, setStatus] = useState<LLMStatus>();
+  const [health, setHealth] = useState<LLMHealth>();
+  const [healthLoading, setHealthLoading] = useState(false);
   const [text, setText] = useState<string>(PRESETS[0].text);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<LLMTestResult | null>(null);
 
-  const loadStatus = useCallback(() => {
-    llmApi.status().then(setStatus).catch(() => undefined);
+  const loadHealth = useCallback(() => {
+    setHealthLoading(true);
+    llmApi
+      .health()
+      .then(setHealth)
+      .catch(() => undefined)
+      .finally(() => setHealthLoading(false));
   }, []);
 
   useEffect(() => {
-    loadStatus();
-  }, [loadStatus]);
+    loadHealth();
+  }, [loadHealth]);
 
   const run = async () => {
     if (!text.trim()) {
@@ -112,6 +113,158 @@ export function LLMTestPage() {
     }
   };
 
+  const renderHealthCard = () => {
+    if (!health) return <Empty description="加载 LLM 健康状态..." />;
+    const ok = health.enabled && health.reachable && health.modelInstalled;
+    const partial = health.reachable && !health.modelInstalled;
+    return (
+      <Alert
+        type={ok ? 'success' : partial ? 'warning' : 'error'}
+        showIcon
+        message={
+          <Space>
+            {health.enabled ? (
+              ok ? (
+                <>
+                  <CheckCircleOutlined /> LLM 已启用且连通
+                </>
+              ) : (
+                <>
+                  <CloseCircleOutlined /> LLM 已启用但不可用
+                </>
+              )
+            ) : (
+              <>
+                <CloseCircleOutlined /> LLM 未启用
+              </>
+            )}
+          </Space>
+        }
+        description={
+          <Descriptions size="small" column={2}>
+            <Descriptions.Item label="是否启用">
+              <Tag color={health.enabled ? 'green' : 'default'}>
+                {health.enabled ? 'true' : 'false (设 LLM_JUDGE_ENABLED=true)'}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Ollama 可达">
+              <Tag color={health.reachable ? 'green' : 'red'}>
+                {health.reachable ? `OK (${health.latencyMs}ms)` : `FAIL: ${health.error || '未知'}`}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="目标模型">
+              <Tag color="purple">{health.model}</Tag>
+              {health.reachable && (
+                <Tag color={health.modelInstalled ? 'green' : 'red'}>
+                  {health.modelInstalled ? '已安装' : `未 pull (跑 ollama pull ${health.model})`}
+                </Tag>
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="Ollama Host">
+              <code>{health.host}</code>
+            </Descriptions.Item>
+            {health.reachable && (
+              <Descriptions.Item label="本机已装模型" span={2}>
+                {health.availableModels.length ? (
+                  <Space wrap>
+                    {health.availableModels.map((m) => (
+                      <Tag key={m} color={m === health.model ? 'purple' : 'default'}>
+                        {m}
+                      </Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  <Typography.Text type="secondary">无</Typography.Text>
+                )}
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+        }
+      />
+    );
+  };
+
+  const renderTraces = (traces: LLMJudgeTrace[]) => {
+    if (!traces.length) {
+      return (
+        <Empty
+          description={
+            <Space direction="vertical" size={4}>
+              <Typography.Text>本次检测未触发任何 LLM 调用</Typography.Text>
+              <Typography.Text type="secondary">
+                可能原因：LLM 未启用 / 所有命中的置信度都在 [0.5, 0.85) 之外 / 全部命中击中缓存（看 fromCache）
+              </Typography.Text>
+            </Space>
+          }
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+        />
+      );
+    }
+    return (
+      <Table
+        size="small"
+        rowKey={(_, idx) => String(idx)}
+        dataSource={traces}
+        pagination={false}
+        columns={[
+          { title: '#', width: 40, render: (_, __, idx) => idx + 1 },
+          { title: '命中词', dataIndex: 'word', render: (v: string) => <code>{v}</code> },
+          { title: '类别', dataIndex: 'category', width: 110 },
+          {
+            title: '状态',
+            width: 90,
+            render: (_, row) => {
+              if (row.fromCache) return <Tag color="blue">缓存</Tag>;
+              if (!row.ok) return <Tag color="red">失败</Tag>;
+              return <Tag color="green">OK</Tag>;
+            },
+          },
+          {
+            title: 'verdict',
+            dataIndex: 'verdict',
+            width: 100,
+            render: (v: string | undefined) =>
+              v ? <Tag color={verdictTone[v]}>{verdictLabel[v] || v}</Tag> : '—',
+          },
+          {
+            title: '耗时',
+            dataIndex: 'durationMs',
+            width: 90,
+            render: (v: number) => `${v} ms`,
+          },
+          {
+            title: 'HTTP',
+            dataIndex: 'httpStatus',
+            width: 70,
+            render: (v: number | undefined) => v ?? '—',
+          },
+          {
+            title: '理由 / 错误',
+            render: (_, row) => (
+              <Typography.Text type={row.ok ? undefined : 'danger'} style={{ fontSize: 12 }}>
+                {row.errorMessage || row.reason || '—'}
+              </Typography.Text>
+            ),
+          },
+        ]}
+        expandable={{
+          expandedRowRender: (row: LLMJudgeTrace) => (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Typography.Text strong>Prompt 预览（上下文片段）：</Typography.Text>
+              <pre style={preStyle}>{row.promptPreview}</pre>
+              {row.rawResponse && (
+                <>
+                  <Typography.Text strong>原始响应：</Typography.Text>
+                  <pre style={preStyle}>{row.rawResponse}</pre>
+                </>
+              )}
+            </Space>
+          ),
+        }}
+      />
+    );
+  };
+
   return (
     <Space direction="vertical" size={16} className="full">
       <Card
@@ -122,51 +275,12 @@ export function LLMTestPage() {
           </Space>
         }
         extra={
-          <Button size="small" icon={<ApiOutlined />} onClick={loadStatus}>
-            刷新状态
+          <Button size="small" icon={<ApiOutlined />} loading={healthLoading} onClick={loadHealth}>
+            重新探活
           </Button>
         }
       >
-        {status ? (
-          status.enabled ? (
-            <Alert
-              type="success"
-              showIcon
-              message="LLM 已启用"
-              description={
-                <Descriptions size="small" column={2}>
-                  <Descriptions.Item label="模型">
-                    <Tag color="purple">{status.model}</Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Ollama Host">
-                    <code>{status.host}</code>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="单次最多判定">{status.maxPerDetection} 条</Descriptions.Item>
-                  <Descriptions.Item label="超时">{status.timeoutMs} ms</Descriptions.Item>
-                </Descriptions>
-              }
-            />
-          ) : (
-            <Alert
-              type="warning"
-              showIcon
-              message="LLM 未启用"
-              description={
-                <Space direction="vertical">
-                  <Typography.Text>
-                    当前 <code>LLM_JUDGE_ENABLED=false</code>。仅展示规则引擎结果，不调用 AI 复核。
-                  </Typography.Text>
-                  <Typography.Text type="secondary">
-                    启用方式：在 <code>server/.env</code> 设 <code>LLM_JUDGE_ENABLED=true</code>，并确保
-                    Ollama 已安装且 <code>{status.model}</code> 模型已 pull。
-                  </Typography.Text>
-                </Space>
-              }
-            />
-          )
-        ) : (
-          <Empty description="加载 LLM 状态..." />
-        )}
+        {renderHealthCard()}
       </Card>
 
       <Card title="演示样本（点击填入）">
@@ -215,7 +329,7 @@ export function LLMTestPage() {
       {result && (
         <>
           <Row gutter={[16, 16]}>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Card>
                 <Statistic
                   title="规则引擎耗时"
@@ -225,7 +339,7 @@ export function LLMTestPage() {
                 />
               </Card>
             </Col>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Card>
                 <Statistic
                   title="AI 复核额外耗时"
@@ -236,13 +350,21 @@ export function LLMTestPage() {
                 />
               </Card>
             </Col>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Card>
                 <Statistic
-                  title="LLM 实际判定命中数"
+                  title="LLM 调用次数"
+                  value={result.llm.tracesCount}
+                  valueStyle={{ color: result.llm.tracesCount > 0 ? '#722ed1' : '#bbb' }}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} md={6}>
+              <Card>
+                <Statistic
+                  title="LLM 改写命中数"
                   value={result.llm.judgedCount}
                   suffix={`/ 共 ${result.enhanced.matches.length}`}
-                  valueStyle={{ color: result.llm.judgedCount > 0 ? '#722ed1' : '#bbb' }}
                 />
               </Card>
             </Col>
@@ -251,10 +373,35 @@ export function LLMTestPage() {
           <Card
             title={
               <Space>
+                <RobotOutlined style={{ color: '#722ed1' }} />
+                <span>AI 调用日志（traces）</span>
+                <Tag color="purple">{result.traces.length} 次</Tag>
+              </Space>
+            }
+          >
+            {result.llm.enabled ? (
+              renderTraces(result.traces)
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                message="LLM 未启用，不会触发 Ollama 调用"
+                description={
+                  <Typography.Text>
+                    在 <code>server/.env</code> 设 <code>LLM_JUDGE_ENABLED=true</code> 并重启后端。
+                  </Typography.Text>
+                }
+              />
+            )}
+          </Card>
+
+          <Card
+            title={
+              <Space>
                 <span>高亮原文</span>
                 <Tag color="blue">{result.enhanced.matches.length} 项命中</Tag>
                 {result.llm.judgedCount > 0 && (
-                  <Tag color="purple">AI 复核 {result.llm.judgedCount} 次</Tag>
+                  <Tag color="purple">AI 改写 {result.llm.judgedCount} 次</Tag>
                 )}
               </Space>
             }
@@ -266,15 +413,21 @@ export function LLMTestPage() {
             />
           </Card>
 
-          <Card title="规则引擎结果（未经 AI 复核）">
-            <DetectResult result={result.baseline} />
-          </Card>
+          <Collapse
+            items={[
+              {
+                key: 'baseline',
+                label: '规则引擎结果（未经 AI 复核）',
+                children: <DetectResult result={result.baseline} />,
+              },
+            ]}
+          />
 
           <Card
             title={
               <Space>
                 <span>最终结果（含 AI 复核）</span>
-                {!result.llm.enabled && <Tag>LLM 未启用，与上方一致</Tag>}
+                {!result.llm.enabled && <Tag>LLM 未启用，与规则引擎一致</Tag>}
               </Space>
             }
           >
@@ -295,7 +448,7 @@ export function LLMTestPage() {
                       ·「最终置信度」= 若 AI 介入则按 verdict 改写，否则等于规则置信度。
                     </Typography.Text>
                     <Typography.Text>
-                      AI 仅对规则置信度 ∈ [0.5, 0.85) 的命中触发，每次检测最多 {status?.maxPerDetection ?? 3} 条。≥0.85 直接放行不复核；&lt;0.5 已被规则层丢弃。
+                      AI 仅对规则置信度 ∈ [0.5, 0.85) 的命中触发，每次检测最多 {result.llm.tracesCount} 条/次。
                     </Typography.Text>
                     <Typography.Text strong style={{ marginTop: 8 }}>verdict 改写规则：</Typography.Text>
                     <Space wrap>
@@ -313,7 +466,7 @@ export function LLMTestPage() {
                       <Tag color="volcano">字面</Tag>+<Tag color="purple">+AI</Tag> 表示该命中由字面规则触发、并经过 AI 复核改写；表格鼠标悬停到「来源」或「置信度」可看完整链路。
                     </Typography.Text>
                     <Typography.Text type="secondary" style={{ marginTop: 8 }}>
-                      ⚠ 本地小模型（gemma4:e2b）的判定不一定准确，建议把 AI 结论当作"参考意见"而非"最终裁决"。如遇明显误判（如游戏术语被判 sensitive），可调高对应规则的 baseConfidence 或在敏感词页面把规则 contextScope 调为 lenient/global。
+                      ⚠ 本地小模型（gemma4:e2b）的判定不一定准确，建议把 AI 结论当作"参考意见"而非"最终裁决"。
                     </Typography.Text>
                   </Space>
                 }
@@ -325,3 +478,14 @@ export function LLMTestPage() {
     </Space>
   );
 }
+
+const preStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 8,
+  background: '#f7f9f5',
+  border: '1px solid #e2e8df',
+  borderRadius: 4,
+  fontSize: 12,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+};

@@ -115,11 +115,38 @@ export interface LLMStatus {
   maxPerDetection: number;
 }
 
+export interface LLMHealth {
+  enabled: boolean;
+  host: string;
+  model: string;
+  reachable: boolean;
+  modelInstalled: boolean;
+  availableModels: string[];
+  latencyMs: number;
+  error?: string;
+}
+
+export interface LLMJudgeTrace {
+  word: string;
+  category: string;
+  durationMs: number;
+  fromCache: boolean;
+  ok: boolean;
+  verdict?: 'sensitive' | 'neutral' | 'quote' | 'reverse';
+  reason?: string;
+  errorMessage?: string;
+  httpStatus?: number;
+  promptPreview: string;
+  rawResponse?: string;
+}
+
 export interface LLMTestResult {
   llm: {
     enabled: boolean;
     model: string;
+    host: string;
     judgedCount: number;
+    tracesCount: number;
   };
   timing: {
     baselineMs: number;
@@ -128,4 +155,5 @@ export interface LLMTestResult {
   };
   baseline: import('@text-guard/shared').DetectionResult;
   enhanced: import('@text-guard/shared').DetectionResult;
+  traces: LLMJudgeTrace[];
 }

@@ -4,6 +4,7 @@ import type {
   AuthSession,
   Content,
   DetectionEvent,
+  LLMHealth,
   LLMStatus,
   LLMTestResult,
   MenuNode,
@@ -117,5 +118,6 @@ export const logApi = {
 
 export const llmApi = {
   status: () => request.get<LLMStatus>('/llm/status'),
+  health: () => request.get<LLMHealth>('/llm/health'),
   test: (text: string) => request.post<LLMTestResult>('/llm/test', { text }),
 };
