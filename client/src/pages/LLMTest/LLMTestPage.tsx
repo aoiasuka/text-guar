@@ -284,22 +284,36 @@ export function LLMTestPage() {
                 style={{ marginTop: 12 }}
                 type="info"
                 showIcon
-                message="说明"
+                message="置信度全链路 & AI 复核语义"
                 description={
-                  <Space direction="vertical" size={4}>
+                  <Space direction="vertical" size={6}>
+                    <Typography.Text strong>两段置信度：</Typography.Text>
                     <Typography.Text>
-                      AI 仅对置信度 ∈ [0.5, 0.85) 的命中进行二次判定，最多 {status?.maxPerDetection ?? 3} 条/次。
+                      ·「规则置信度」= 规则引擎匹配后，经反绕过折扣、上下文消歧后的初始评分；
                     </Typography.Text>
                     <Typography.Text>
-                      verdict 含义：
-                      {(['sensitive', 'neutral', 'quote', 'reverse'] as const).map((v) => (
-                        <Tag key={v} color={verdictColor(v)} style={{ marginLeft: 8 }}>
-                          {verdictLabel[v]}
-                        </Tag>
-                      ))}
+                      ·「最终置信度」= 若 AI 介入则按 verdict 改写，否则等于规则置信度。
                     </Typography.Text>
                     <Typography.Text>
-                      <Tag color="red">sensitive</Tag> 拉高置信度到 ≥0.9；其它三种将置信度 × 0.3 → 低于阈值的会被丢弃。
+                      AI 仅对规则置信度 ∈ [0.5, 0.85) 的命中触发，每次检测最多 {status?.maxPerDetection ?? 3} 条。≥0.85 直接放行不复核；&lt;0.5 已被规则层丢弃。
+                    </Typography.Text>
+                    <Typography.Text strong style={{ marginTop: 8 }}>verdict 改写规则：</Typography.Text>
+                    <Space wrap>
+                      <Tag color="red">sensitive</Tag>
+                      <Typography.Text>→ 最终置信度 = max(规则值, 0.9)，AI 确认风险</Typography.Text>
+                    </Space>
+                    <Space wrap>
+                      <Tag color="default">neutral</Tag>
+                      <Tag color="blue">quote</Tag>
+                      <Tag color="green">reverse</Tag>
+                      <Typography.Text>→ 最终置信度 = 规则值 × 0.3，多数会被阈值丢弃</Typography.Text>
+                    </Space>
+                    <Typography.Text strong style={{ marginTop: 8 }}>来源标签：</Typography.Text>
+                    <Typography.Text>
+                      <Tag color="volcano">字面</Tag>+<Tag color="purple">+AI</Tag> 表示该命中由字面规则触发、并经过 AI 复核改写；表格鼠标悬停到「来源」或「置信度」可看完整链路。
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ marginTop: 8 }}>
+                      ⚠ 本地小模型（gemma4:e2b）的判定不一定准确，建议把 AI 结论当作"参考意见"而非"最终裁决"。如遇明显误判（如游戏术语被判 sensitive），可调高对应规则的 baseConfidence 或在敏感词页面把规则 contextScope 调为 lenient/global。
                     </Typography.Text>
                   </Space>
                 }

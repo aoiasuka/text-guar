@@ -44,12 +44,15 @@ export function HighlightedText({ text, matches, className }: HighlightedTextPro
         segment.match ? (
           (() => {
             const confidence = segment.match.confidence ?? 1;
+            const original = segment.match.originalConfidence;
             const cs = confidenceStyle(confidence);
+            const confLine = segment.match.judgeVerdict
+              ? `置信度 规则 ${Math.round((original ?? confidence) * 100)}% → AI:${segment.match.judgeVerdict} → 最终 ${Math.round(confidence * 100)}%`
+              : `置信度 ${Math.round(confidence * 100)}%`;
             const title = [
               `${segment.match.category} · ${segment.match.riskLevel}`,
-              `置信度 ${Math.round(confidence * 100)}%`,
+              confLine,
               segment.match.reason ? `原因：${segment.match.reason}` : '',
-              segment.match.judgeVerdict ? `AI：${segment.match.judgeVerdict}` : '',
             ]
               .filter(Boolean)
               .join(' · ');

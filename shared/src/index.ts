@@ -21,6 +21,11 @@ export interface DetectionMatch {
   end: number;
   source?: 'literal' | 'literal_variant' | 'regex' | 'credential' | 'llm';
   confidence?: number;
+  /**
+   * 经 AI 复核改写前的置信度。仅当 judgeVerdict 存在时填充。
+   * 前端用于展示「规则 X% → AI:verdict → 最终 Y%」全链路。
+   */
+  originalConfidence?: number;
   reason?: string;
   judgeVerdict?: 'sensitive' | 'neutral' | 'quote' | 'reverse';
 }

@@ -67,13 +67,21 @@ function setCached(key: string, value: JudgeResult) {
 }
 
 const PROMPT_TEMPLATE = (args: JudgeOptions) =>
-  `你是内容审核员。判断下面的命中词在该上下文中是否真实属于风险信息。\n` +
-  `类别：${args.category}\n` +
-  `命中词：${args.word}\n` +
-  `完整上下文：…${args.contextBefore}「${args.word}」${args.contextAfter}…\n\n` +
-  `只输出 JSON，字段：\n` +
-  `- verdict: "sensitive"（确实是风险） / "neutral"（中性提及或复合词） / "quote"（引用他人言论） / "reverse"（反向劝阻）\n` +
-  `- reason: 一句话理由（20 字内）`;
+  `你是内容安全审核员。判断下面**命中词**在该上下文中是否构成真实的风险信息。\n\n` +
+  `规则触发分类：${args.category}\n` +
+  `命中词：「${args.word}」\n` +
+  `完整上下文：…${args.contextBefore}『${args.word}』${args.contextAfter}…\n\n` +
+  `判定原则（按优先级）：\n` +
+  `1. 若命中词处于反向劝阻、警示、报道、引用、教育、技术说明等中性语境，判为 neutral / quote / reverse；\n` +
+  `2. 若命中词属于游戏术语、专业名词、复合词的一部分（如「攻击力」「赌一把试试」「测试敏感词」），判为 neutral；\n` +
+  `3. 仅当文字真实在传播 / 教唆 / 实施风险行为时才判 sensitive；存疑时倾向 neutral。\n\n` +
+  `参考示例：\n` +
+  `- "这游戏角色攻击力很强" → {"verdict":"neutral","reason":"游戏术语"}\n` +
+  `- "请勿沉迷赌博" → {"verdict":"reverse","reason":"反向劝阻"}\n` +
+  `- "他说『最近迷上赌博』" → {"verdict":"quote","reason":"引述"}\n` +
+  `- "组织线下赌博活动" → {"verdict":"sensitive","reason":"组织违法行为"}\n\n` +
+  `只输出 JSON：\n` +
+  `{"verdict":"sensitive|neutral|quote|reverse","reason":"一句话理由(20字内)"}`;
 
 export async function judge(args: JudgeOptions): Promise<JudgeResult> {
   const key = cacheKey(args.word, args.contextBefore, args.contextAfter);
@@ -180,6 +188,7 @@ export async function judgeUnsure(matches: DetectionMatch[], text: string): Prom
     const aiTag = r.reason ? `ai:${r.verdict}(${r.reason})` : `ai:${r.verdict}`;
     next[i] = {
       ...m,
+      originalConfidence: oldConf,
       confidence: newConf,
       judgeVerdict: r.verdict,
       reason: m.reason ? `${m.reason} / ${aiTag}` : aiTag,

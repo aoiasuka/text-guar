@@ -74,25 +74,49 @@ export function DetectResult({ result }: { result?: DetectionResult }) {
           {
             title: '来源',
             dataIndex: 'source',
-            width: 90,
-            render: (value: string = 'literal') => (
-              <Tag color={sourceTone[value] || 'default'}>{sourceLabel[value] || value}</Tag>
+            width: 130,
+            render: (value: string = 'literal', row) => (
+              <Space size={2} wrap>
+                <Tooltip title={row.judgeVerdict ? '规则首次命中的来源' : undefined}>
+                  <Tag color={sourceTone[value] || 'default'} style={{ margin: 0 }}>
+                    {sourceLabel[value] || value}
+                  </Tag>
+                </Tooltip>
+                {row.judgeVerdict && (
+                  <Tooltip title="AI 复核已介入并改写了置信度">
+                    <Tag color="purple" style={{ margin: 0 }}>
+                      +AI
+                    </Tag>
+                  </Tooltip>
+                )}
+              </Space>
             ),
           },
           {
             title: '置信度',
             dataIndex: 'confidence',
-            width: 130,
+            width: 150,
             render: (value: number | undefined, row) => {
-              const c = value ?? 1;
+              const final = value ?? 1;
+              const original = row.originalConfidence;
+              const tip = row.judgeVerdict
+                ? `规则置信度 ${Math.round((original ?? final) * 100)}% → AI:${row.judgeVerdict} → 最终 ${Math.round(final * 100)}%${row.reason ? `\n${row.reason}` : ''}`
+                : row.reason || `${Math.round(final * 100)}%`;
               return (
-                <Tooltip title={row.reason || `${Math.round(c * 100)}%`}>
-                  <Progress
-                    percent={Math.round(c * 100)}
-                    size="small"
-                    strokeColor={confidenceTone(c)}
-                    format={(percent) => `${percent}%`}
-                  />
+                <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
+                  <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                    <Progress
+                      percent={Math.round(final * 100)}
+                      size="small"
+                      strokeColor={confidenceTone(final)}
+                      format={(percent) => `${percent}%`}
+                    />
+                    {original !== undefined && Math.abs(original - final) > 0.01 && (
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        规则 {Math.round(original * 100)}% → 最终 {Math.round(final * 100)}%
+                      </Typography.Text>
+                    )}
+                  </Space>
                 </Tooltip>
               );
             },
