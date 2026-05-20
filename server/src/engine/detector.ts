@@ -2,7 +2,7 @@ import type { DetectionMatch, DetectionResult, RiskLevel } from '@text-guard/sha
 import { applyReplacement } from './filter.js';
 import { credentialRules } from './credential-rules.js';
 import { disambiguate, type ContextScope } from './context-disambiguator.js';
-import { judgeUnsure, isLLMEnabled } from './llm-judge.js';
+import { judgeFullText, judgeUnsure, isLLMEnabled } from './llm-judge.js';
 import {
   expandVariants,
   mapToOriginalRange,
@@ -457,15 +457,28 @@ function emptyResult(text: string): DetectionResult {
 export const detector = new SensitiveDetector();
 
 /**
- * 异步检测：在 detector.detect 之上叠加 LLM 二次判定
+ * 异步检测：在 detector.detect 之上叠加 LLM 判定
  * - LLM_JUDGE_ENABLED=false 时与 detect() 等价
- * - 启用时对中等置信度命中调本地 Ollama 二次判定，调整 confidence 后重算 score/level/strategy
+ * - 启用时：
+ *   · 规则有命中 → 对每条命中逐条调 judgeUnsure 复核（可改写置信度/verdict）
+ *   · 规则零命中 → 调 judgeFullText 整段判定（兜底覆盖词库外的风险）
+ *   · 不管有没有命中，启用 LLM 后每次检测都至少触发 1 次 AI 调用
  */
 export async function detectWithLLM(text: string): Promise<DetectionResult> {
   const base = detector.detect(text);
-  if (!isLLMEnabled() || base.matches.length === 0) return base;
-  const judged = await judgeUnsure(base.matches, text);
-  const filtered = judged.filter((m) => (m.confidence ?? 1) >= CONFIDENCE_DROP_BELOW);
+  if (!isLLMEnabled()) return base;
+
+  let matches: DetectionMatch[];
+  if (base.matches.length === 0) {
+    // 规则零命中 → AI 全文兜底判定
+    const aiHit = await judgeFullText(text);
+    matches = aiHit ? [aiHit] : [];
+  } else {
+    // 规则有命中 → AI 逐条复核
+    matches = await judgeUnsure(base.matches, text);
+  }
+
+  const filtered = matches.filter((m) => (m.confidence ?? 1) >= CONFIDENCE_DROP_BELOW);
   const score = Math.round(scoreMatches(filtered));
   const level = getRiskLevel(score);
   const strategy = getFilterStrategy(score);

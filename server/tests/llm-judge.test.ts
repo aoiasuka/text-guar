@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { after, beforeEach, describe, it } from 'node:test';
 import type { DetectionMatch } from '@text-guard/shared';
-import { judgeUnsure, isLLMEnabled, _clearCacheForTest } from '../src/engine/llm-judge.js';
+import { judgeFullText, judgeUnsure, isLLMEnabled, _clearCacheForTest } from '../src/engine/llm-judge.js';
 
 const origFetch = globalThis.fetch;
 const origEnv = { ...process.env };
@@ -130,5 +130,108 @@ describe('LLM 兜底 · Ollama HTTP API', () => {
 
     await judgeUnsure([mkMatch(0.3)], '他在赌博');
     assert.equal(called, 1, 'judgeUnsure 不再过滤入参，全部命中都调');
+  });
+});
+
+describe('judgeFullText · AI 全文兜底', () => {
+  after(() => {
+    globalThis.fetch = origFetch;
+    restoreEnv();
+  });
+
+  beforeEach(() => {
+    restoreEnv();
+    _clearCacheForTest();
+  });
+
+  it('LLM 未启用时直接返回 null（不调 fetch）', async () => {
+    process.env.LLM_JUDGE_ENABLED = 'false';
+    let called = 0;
+    globalThis.fetch = (async () => {
+      called += 1;
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const r = await judgeFullText('傻逼操你妈');
+    assert.equal(r, null);
+    assert.equal(called, 0);
+  });
+
+  it('verdict=sensitive 时返回 source=llm 的 DetectionMatch', async () => {
+    process.env.LLM_JUDGE_ENABLED = 'true';
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          response: JSON.stringify({
+            verdict: 'sensitive',
+            riskLevel: 'high',
+            category: '辱骂',
+            span: '傻逼',
+            reason: '人身攻击',
+          }),
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const r = await judgeFullText('傻逼，操你妈');
+    assert.ok(r, '应生成命中');
+    assert.equal(r?.source, 'llm');
+    assert.equal(r?.riskLevel, 'high');
+    assert.equal(r?.judgeVerdict, 'sensitive');
+    assert.match(r?.category ?? '', /AI:辱骂/);
+    assert.equal(r?.word, '傻逼');
+    assert.equal(r?.start, 0);
+    assert.equal(r?.end, 2);
+  });
+
+  it('verdict=neutral 时返回 null', async () => {
+    process.env.LLM_JUDGE_ENABLED = 'true';
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          response: JSON.stringify({
+            verdict: 'neutral',
+            riskLevel: 'low',
+            category: '中性',
+            span: '',
+            reason: '日常对话',
+          }),
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const r = await judgeFullText('今天天气真好');
+    assert.equal(r, null);
+  });
+
+  it('span 在原文找不到时降级用片段', async () => {
+    process.env.LLM_JUDGE_ENABLED = 'true';
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          response: JSON.stringify({
+            verdict: 'sensitive',
+            riskLevel: 'medium',
+            category: '违规',
+            span: '不在原文里的内容',
+            reason: '...',
+          }),
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const r = await judgeFullText('原文内容很短');
+    assert.ok(r);
+    assert.ok(r?.word.length);
+  });
+
+  it('Ollama 不可达时返回 null（不污染主流程）', async () => {
+    process.env.LLM_JUDGE_ENABLED = 'true';
+    globalThis.fetch = (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as typeof fetch;
+
+    const r = await judgeFullText('傻逼');
+    assert.equal(r, null);
   });
 });

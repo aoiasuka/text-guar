@@ -352,7 +352,248 @@ export function isLLMEnabled(): boolean {
   return LLM_ENABLED();
 }
 
-/** 健康检查：探活 Ollama 与模型可用性 */
+// =============================================================================
+// judgeFullText：整段文本独立判定（用于规则零命中时的 AI 兜底）
+// =============================================================================
+
+export interface FullTextVerdict {
+  verdict: 'sensitive' | 'neutral';
+  riskLevel: 'low' | 'medium' | 'high';
+  category: string;
+  span: string;
+  reason: string;
+}
+
+const FULLTEXT_PROMPT = (text: string) =>
+  `你是内容安全审核员。判断下面整段文本是否含真实的风险信息。\n\n` +
+  `候选风险类别：辱骂、暴力、色情、政治敏感、违法、凭证泄漏、广告营销、垃圾信息。\n\n` +
+  `判定原则：\n` +
+  `1. 反向劝阻、教育、报道、引用等中性语境 → neutral；\n` +
+  `2. 真实在传播、教唆、实施风险行为 → sensitive；\n` +
+  `3. 存疑时倾向 neutral。\n\n` +
+  `待检测文本：\n"${text}"\n\n` +
+  `只输出 JSON：\n` +
+  `{"verdict":"sensitive|neutral","riskLevel":"low|medium|high","category":"具体类别(不超过10字)","span":"风险片段原文(若无则空串)","reason":"一句话理由(20字内)"}`;
+
+const fullTextCache = new Map<string, CacheEntry>();
+const FULLTEXT_CACHE_CAP = 200;
+
+function fullTextCacheKey(text: string): string {
+  return createHash('sha256').update(`${MODEL()}|fulltext|${text}`).digest('hex');
+}
+
+function getFullTextCached(key: string): FullTextVerdict | undefined {
+  const e = fullTextCache.get(key);
+  if (!e) return undefined;
+  if (e.expireAt <= Date.now()) {
+    fullTextCache.delete(key);
+    return undefined;
+  }
+  fullTextCache.delete(key);
+  fullTextCache.set(key, e);
+  return e.value as unknown as FullTextVerdict;
+}
+
+function setFullTextCached(key: string, value: FullTextVerdict) {
+  if (fullTextCache.size >= FULLTEXT_CACHE_CAP) {
+    const first = fullTextCache.keys().next().value;
+    if (first !== undefined) fullTextCache.delete(first);
+  }
+  fullTextCache.set(key, {
+    value: value as unknown as JudgeResult,
+    expireAt: Date.now() + CACHE_TTL_MS,
+  });
+}
+
+function parseFullTextVerdict(raw: string): FullTextVerdict | null {
+  try {
+    const obj = JSON.parse(raw);
+    if (obj.verdict !== 'sensitive' && obj.verdict !== 'neutral') return null;
+    return {
+      verdict: obj.verdict,
+      riskLevel: ['low', 'medium', 'high'].includes(obj.riskLevel) ? obj.riskLevel : 'medium',
+      category: typeof obj.category === 'string' ? obj.category.slice(0, 20) : '风险',
+      span: typeof obj.span === 'string' ? obj.span : '',
+      reason: typeof obj.reason === 'string' ? obj.reason.slice(0, 100) : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 整段文本独立判定
+ * - 返回 null = 判 neutral 或调用失败（保守按"无风险"处理，不向结果注入命中）
+ * - 返回 DetectionMatch = 判 sensitive 且能定位 span，作为一条 source='llm' 的命中加入结果
+ */
+export async function judgeFullText(text: string): Promise<DetectionMatch | null> {
+  if (!LLM_ENABLED()) return null;
+  const t0 = Date.now();
+  const key = fullTextCacheKey(text);
+  const promptPreview = `[全文判定] ${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`;
+
+  const cached = getFullTextCached(key);
+  if (cached) {
+    logInfo(`fulltext cache HIT → ${cached.verdict}`);
+    currentTraces?.push({
+      word: '[整段文本]',
+      category: 'AI 全文兜底',
+      durationMs: 0,
+      fromCache: true,
+      ok: true,
+      verdict: cached.verdict,
+      reason: cached.reason,
+      promptPreview,
+    });
+    return buildMatchFromFullText(text, cached);
+  }
+
+  logInfo(`→ ollama 全文判定 length=${text.length} model="${MODEL()}"`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS());
+  let resp: Response;
+  try {
+    resp = await fetch(`${OLLAMA_HOST()}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL(),
+        prompt: FULLTEXT_PROMPT(text),
+        format: 'json',
+        stream: false,
+        options: { temperature: 0, num_predict: 300 },
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const durationMs = Date.now() - t0;
+    const msg = error instanceof Error ? error.message : String(error);
+    logWarn(`✗ 全文判定失败 duration=${durationMs}ms reason="${msg}"`);
+    currentTraces?.push({
+      word: '[整段文本]',
+      category: 'AI 全文兜底',
+      durationMs,
+      fromCache: false,
+      ok: false,
+      errorMessage: msg,
+      promptPreview,
+    });
+    clearTimeout(timer);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!resp.ok) {
+    const durationMs = Date.now() - t0;
+    logWarn(`✗ 全文判定 http ${resp.status} duration=${durationMs}ms`);
+    currentTraces?.push({
+      word: '[整段文本]',
+      category: 'AI 全文兜底',
+      durationMs,
+      fromCache: false,
+      ok: false,
+      errorMessage: `http ${resp.status}`,
+      httpStatus: resp.status,
+      promptPreview,
+    });
+    return null;
+  }
+
+  let json: { response?: string };
+  try {
+    json = (await resp.json()) as { response?: string };
+  } catch (error) {
+    const durationMs = Date.now() - t0;
+    const msg = error instanceof Error ? error.message : String(error);
+    logWarn(`✗ 全文判定响应非 JSON duration=${durationMs}ms reason="${msg}"`);
+    currentTraces?.push({
+      word: '[整段文本]',
+      category: 'AI 全文兜底',
+      durationMs,
+      fromCache: false,
+      ok: false,
+      errorMessage: msg,
+      httpStatus: resp.status,
+      promptPreview,
+    });
+    return null;
+  }
+
+  const rawResponse = json.response ?? '';
+  const parsed = parseFullTextVerdict(rawResponse);
+  const durationMs = Date.now() - t0;
+
+  if (!parsed) {
+    logWarn(`✗ 全文判定解析失败 duration=${durationMs}ms raw=${JSON.stringify(rawResponse).slice(0, 200)}`);
+    currentTraces?.push({
+      word: '[整段文本]',
+      category: 'AI 全文兜底',
+      durationMs,
+      fromCache: false,
+      ok: false,
+      errorMessage: 'json parse failed',
+      httpStatus: resp.status,
+      rawResponse: rawResponse.slice(0, 500),
+      promptPreview,
+    });
+    return null;
+  }
+
+  logInfo(`✓ 全文判定 → ${parsed.verdict} (${parsed.category}) duration=${durationMs}ms reason="${parsed.reason}"`);
+  setFullTextCached(key, parsed);
+  currentTraces?.push({
+    word: '[整段文本]',
+    category: 'AI 全文兜底',
+    durationMs,
+    fromCache: false,
+    ok: true,
+    verdict: parsed.verdict,
+    reason: parsed.reason,
+    httpStatus: resp.status,
+    rawResponse: rawResponse.slice(0, 500),
+    promptPreview,
+  });
+  return buildMatchFromFullText(text, parsed);
+}
+
+function buildMatchFromFullText(text: string, v: FullTextVerdict): DetectionMatch | null {
+  if (v.verdict !== 'sensitive') return null;
+  // 用 span 定位原文位置；定位不到时降级到全文起始
+  let start = 0;
+  let end = Math.min(text.length, 120);
+  let word = text.slice(0, end);
+  if (v.span && v.span.trim()) {
+    const idx = text.indexOf(v.span);
+    if (idx >= 0) {
+      start = idx;
+      end = idx + v.span.length;
+      word = v.span;
+    } else {
+      word = v.span.slice(0, 120);
+    }
+  }
+  return {
+    type: 'word',
+    word,
+    riskLevel: v.riskLevel,
+    category: `AI:${v.category}`,
+    replacement: '[AI风险]',
+    start,
+    end,
+    source: 'llm',
+    confidence: 0.85,
+    judgeVerdict: 'sensitive',
+    reason: `ai_full_text:${v.reason}`,
+  };
+}
+
+// 测试辅助：清空缓存（生产代码不应调用）
+export function _clearCacheForTest(): void {
+  cache.clear();
+  fullTextCache.clear();
+}
 export interface LLMHealth {
   enabled: boolean;
   host: string;
@@ -410,9 +651,4 @@ export async function checkHealth(): Promise<LLMHealth> {
   } finally {
     clearTimeout(timer);
   }
-}
-
-// 测试辅助：清空缓存（生产代码不应调用）
-export function _clearCacheForTest(): void {
-  cache.clear();
 }
