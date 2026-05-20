@@ -157,6 +157,23 @@ export class SensitiveDetector {
     return this.literalWords.length + this.regexEntries.length + (this.credentialMeta ? 1 : 0);
   }
 
+  /**
+   * 给 AI 复核用的"业务敏感词库摘要"：按 category 分组，每组挑前 N 个示例词。
+   * 让本地小模型在零规则命中时也能感知项目关心哪些类型的内容。
+   */
+  getCategorySummary(maxPerCategory = 5): Record<string, string[]> {
+    const map: Record<string, string[]> = {};
+    const add = (cat: string, word: string) => {
+      const key = cat || '默认';
+      if (!map[key]) map[key] = [];
+      if (map[key].length < maxPerCategory && !map[key].includes(word)) map[key].push(word);
+    };
+    for (const w of this.literalWords) add(w.category, w.word);
+    for (const r of this.regexEntries) add(r.category, r.word);
+    if (this.credentialMeta) add(this.credentialMeta.category, '[凭证识别·内置规则]');
+    return map;
+  }
+
   detect(text: string): DetectionResult {
     if (!text) return emptyResult(text);
 
@@ -468,14 +485,17 @@ export async function detectWithLLM(text: string): Promise<DetectionResult> {
   const base = detector.detect(text);
   if (!isLLMEnabled()) return base;
 
+  // 把当前敏感词库摘要带给 AI，让本地小模型感知项目业务关注的风险类别
+  const catalog = detector.getCategorySummary();
+
   let matches: DetectionMatch[];
   if (base.matches.length === 0) {
-    // 规则零命中 → AI 全文兜底判定
-    const aiHit = await judgeFullText(text);
+    // 规则零命中 → AI 全文兜底判定（带词库摘要可识别广告软文/凭证泄漏等隐性风险）
+    const aiHit = await judgeFullText(text, catalog);
     matches = aiHit ? [aiHit] : [];
   } else {
-    // 规则有命中 → AI 逐条复核
-    matches = await judgeUnsure(base.matches, text);
+    // 规则有命中 → AI 逐条复核（带词库摘要可借助同 category 的近邻词消歧）
+    matches = await judgeUnsure(base.matches, text, catalog);
   }
 
   const filtered = matches.filter((m) => (m.confidence ?? 1) >= CONFIDENCE_DROP_BELOW);

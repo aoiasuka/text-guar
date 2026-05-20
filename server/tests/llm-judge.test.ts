@@ -234,4 +234,29 @@ describe('judgeFullText · AI 全文兜底', () => {
     const r = await judgeFullText('傻逼');
     assert.equal(r, null);
   });
+
+  it('catalog 参数被注入到 prompt（让 AI 感知项目敏感词类别）', async () => {
+    process.env.LLM_JUDGE_ENABLED = 'true';
+    let captured: any = null;
+    globalThis.fetch = (async (_url: any, init: any) => {
+      captured = JSON.parse(String(init.body));
+      return new Response(
+        JSON.stringify({
+          response: JSON.stringify({ verdict: 'neutral', riskLevel: 'low', category: '中性', span: '', reason: 'n' }),
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    await judgeFullText('一段广告软文', {
+      营销: ['推广', '广告'],
+      违规: ['赌博', '诈骗'],
+    });
+
+    assert.ok(captured, 'fetch 应被调用');
+    const prompt = String(captured.prompt);
+    assert.match(prompt, /项目敏感词库摘要/);
+    assert.match(prompt, /营销.*推广|推广.*广告/);
+    assert.match(prompt, /违规.*赌博|赌博.*诈骗/);
+  });
 });

@@ -25,6 +25,27 @@ interface JudgeOptions {
   category: string;
 }
 
+/** 业务敏感词库摘要：category → 示例词列表，注入到 prompt 让 AI 感知项目关注的风险类别 */
+export type CategoryCatalog = Record<string, string[]>;
+
+function buildCatalogBlock(catalog?: CategoryCatalog): string {
+  if (!catalog || Object.keys(catalog).length === 0) return '';
+  const lines = Object.entries(catalog)
+    .filter(([, words]) => words.length > 0)
+    .map(([cat, words]) => `  · ${cat}：${words.slice(0, 6).join('、')}`);
+  if (lines.length === 0) return '';
+  return `\n\n项目敏感词库摘要（业务关注的风险类别，仅作判定参考，不要求逐字匹配）：\n${lines.join('\n')}`;
+}
+
+function hashCatalog(catalog?: CategoryCatalog): string {
+  if (!catalog || Object.keys(catalog).length === 0) return 'nocatalog';
+  const stable = Object.keys(catalog)
+    .sort()
+    .map((k) => `${k}:${catalog[k].slice().sort().join(',')}`)
+    .join('|');
+  return createHash('sha256').update(stable).digest('hex').slice(0, 16);
+}
+
 export interface JudgeTrace {
   word: string;
   category: string;
@@ -68,9 +89,9 @@ const cache = new Map<string, CacheEntry>();
 const CACHE_CAP = 500;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-function cacheKey(word: string, ctxBefore: string, ctxAfter: string): string {
+function cacheKey(word: string, ctxBefore: string, ctxAfter: string, catalogHash: string): string {
   return createHash('sha256')
-    .update(`${MODEL()}|${word}|${ctxBefore}|${ctxAfter}`)
+    .update(`${MODEL()}|${catalogHash}|${word}|${ctxBefore}|${ctxAfter}`)
     .digest('hex');
 }
 
@@ -94,11 +115,11 @@ function setCached(key: string, value: JudgeResult) {
   cache.set(key, { value, expireAt: Date.now() + CACHE_TTL_MS });
 }
 
-const PROMPT_TEMPLATE = (args: JudgeOptions) =>
+const PROMPT_TEMPLATE = (args: JudgeOptions, catalog?: CategoryCatalog) =>
   `你是内容安全审核员。判断下面**命中词**在该上下文中是否构成真实的风险信息。\n\n` +
   `规则触发分类：${args.category}\n` +
   `命中词：「${args.word}」\n` +
-  `完整上下文：…${args.contextBefore}『${args.word}』${args.contextAfter}…\n\n` +
+  `完整上下文：…${args.contextBefore}『${args.word}』${args.contextAfter}…${buildCatalogBlock(catalog)}\n\n` +
   `判定原则（按优先级）：\n` +
   `1. 若命中词处于反向劝阻、警示、报道、引用、教育、技术说明等中性语境，判为 neutral / quote / reverse；\n` +
   `2. 若命中词属于游戏术语、专业名词、复合词的一部分（如「攻击力」「赌一把试试」「测试敏感词」），判为 neutral；\n` +
@@ -122,9 +143,10 @@ function logWarn(msg: string, meta?: Record<string, unknown>) {
   console.warn(`[llm-judge] ${msg}${tail}`);
 }
 
-export async function judge(args: JudgeOptions): Promise<JudgeResult> {
+export async function judge(args: JudgeOptions, catalog?: CategoryCatalog): Promise<JudgeResult> {
   const t0 = Date.now();
-  const key = cacheKey(args.word, args.contextBefore, args.contextAfter);
+  const catalogHash = hashCatalog(catalog);
+  const key = cacheKey(args.word, args.contextBefore, args.contextAfter, catalogHash);
   const promptPreview = `…${args.contextBefore.slice(-30)}『${args.word}』${args.contextAfter.slice(0, 30)}…`;
 
   const cached = getCached(key);
@@ -154,7 +176,7 @@ export async function judge(args: JudgeOptions): Promise<JudgeResult> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model: MODEL(),
-        prompt: PROMPT_TEMPLATE(args),
+        prompt: PROMPT_TEMPLATE(args, catalog),
         format: 'json',
         stream: false,
         options: { temperature: 0, num_predict: 200 },
@@ -284,7 +306,11 @@ function fallback(why: string): JudgeResult {
   return { verdict: 'sensitive', reason: `judge_unavailable(${why})`, failed: true };
 }
 
-export async function judgeUnsure(matches: DetectionMatch[], text: string): Promise<DetectionMatch[]> {
+export async function judgeUnsure(
+  matches: DetectionMatch[],
+  text: string,
+  catalog?: CategoryCatalog,
+): Promise<DetectionMatch[]> {
   if (!LLM_ENABLED()) return matches;
   // 对所有命中（confidence ≥ 0.5，即未被规则层丢弃的）都调 AI 复核
   // 低置信度命中已经被 detector.detect 内部的 CONFIDENCE_DROP_BELOW 过滤掉，到这里的全是有效命中
@@ -306,12 +332,15 @@ export async function judgeUnsure(matches: DetectionMatch[], text: string): Prom
       const after = text.slice(m.end, Math.min(text.length, m.end + CONTEXT_WINDOW));
       return {
         i,
-        r: await judge({
-          word: m.word,
-          contextBefore: before,
-          contextAfter: after,
-          category: m.category,
-        }),
+        r: await judge(
+          {
+            word: m.word,
+            contextBefore: before,
+            contextAfter: after,
+            category: m.category,
+          },
+          catalog,
+        ),
       };
     }),
   );
@@ -364,13 +393,14 @@ export interface FullTextVerdict {
   reason: string;
 }
 
-const FULLTEXT_PROMPT = (text: string) =>
+const FULLTEXT_PROMPT = (text: string, catalog?: CategoryCatalog) =>
   `你是内容安全审核员。判断下面整段文本是否含真实的风险信息。\n\n` +
-  `候选风险类别：辱骂、暴力、色情、政治敏感、违法、凭证泄漏、广告营销、垃圾信息。\n\n` +
+  `候选风险类别：辱骂、暴力、色情、政治敏感、违法、凭证泄漏、广告营销、垃圾信息、隐私泄漏。${buildCatalogBlock(catalog)}\n\n` +
   `判定原则：\n` +
   `1. 反向劝阻、教育、报道、引用等中性语境 → neutral；\n` +
   `2. 真实在传播、教唆、实施风险行为 → sensitive；\n` +
-  `3. 存疑时倾向 neutral。\n\n` +
+  `3. 优先匹配上方"项目敏感词库摘要"中的业务关注类别（如广告营销/凭证泄漏等隐性风险）；\n` +
+  `4. 存疑时倾向 neutral。\n\n` +
   `待检测文本：\n"${text}"\n\n` +
   `只输出 JSON：\n` +
   `{"verdict":"sensitive|neutral","riskLevel":"low|medium|high","category":"具体类别(不超过10字)","span":"风险片段原文(若无则空串)","reason":"一句话理由(20字内)"}`;
@@ -378,8 +408,8 @@ const FULLTEXT_PROMPT = (text: string) =>
 const fullTextCache = new Map<string, CacheEntry>();
 const FULLTEXT_CACHE_CAP = 200;
 
-function fullTextCacheKey(text: string): string {
-  return createHash('sha256').update(`${MODEL()}|fulltext|${text}`).digest('hex');
+function fullTextCacheKey(text: string, catalogHash: string): string {
+  return createHash('sha256').update(`${MODEL()}|fulltext|${catalogHash}|${text}`).digest('hex');
 }
 
 function getFullTextCached(key: string): FullTextVerdict | undefined {
@@ -426,10 +456,11 @@ function parseFullTextVerdict(raw: string): FullTextVerdict | null {
  * - 返回 null = 判 neutral 或调用失败（保守按"无风险"处理，不向结果注入命中）
  * - 返回 DetectionMatch = 判 sensitive 且能定位 span，作为一条 source='llm' 的命中加入结果
  */
-export async function judgeFullText(text: string): Promise<DetectionMatch | null> {
+export async function judgeFullText(text: string, catalog?: CategoryCatalog): Promise<DetectionMatch | null> {
   if (!LLM_ENABLED()) return null;
   const t0 = Date.now();
-  const key = fullTextCacheKey(text);
+  const catalogHash = hashCatalog(catalog);
+  const key = fullTextCacheKey(text, catalogHash);
   const promptPreview = `[全文判定] ${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`;
 
   const cached = getFullTextCached(key);
@@ -459,7 +490,7 @@ export async function judgeFullText(text: string): Promise<DetectionMatch | null
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model: MODEL(),
-        prompt: FULLTEXT_PROMPT(text),
+        prompt: FULLTEXT_PROMPT(text, catalog),
         format: 'json',
         stream: false,
         options: { temperature: 0, num_predict: 300 },
