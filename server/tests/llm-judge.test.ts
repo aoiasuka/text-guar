@@ -55,7 +55,7 @@ describe('LLM 兜底 · Ollama HTTP API', () => {
 
   it('LLM 启用且 verdict=quote 时把 confidence ×= 0.3', async () => {
     process.env.LLM_JUDGE_ENABLED = 'true';
-    process.env.LLM_JUDGE_MODEL = 'gemma3:4b';
+    process.env.LLM_JUDGE_MODEL = 'gemma4:e2b';
     const calls: any[] = [];
     globalThis.fetch = (async (_url: any, init: any) => {
       calls.push(JSON.parse(String(init.body)));
@@ -69,7 +69,7 @@ describe('LLM 兜底 · Ollama HTTP API', () => {
     const out = await judgeUnsure(input, '他说"赌博"是坏事');
 
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].model, 'gemma3:4b');
+    assert.equal(calls[0].model, 'gemma4:e2b');
     assert.equal(calls[0].format, 'json');
     assert.equal(calls[0].options.temperature, 0);
     assert.ok(Math.abs((out[0].confidence ?? 0) - 0.18) < 0.001, `期望 0.6×0.3=0.18，实际 ${out[0].confidence}`);

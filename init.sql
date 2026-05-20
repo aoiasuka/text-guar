@@ -19,6 +19,7 @@ USE `text_guard`;
 -- -----------------------------------------------------------------------------
 -- 2. 清理旧表（若存在，按外键依赖逆序删除）
 -- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS `detection_events`;
 DROP TABLE IF EXISTS `operation_logs`;
 DROP TABLE IF EXISTS `reviews`;
 DROP TABLE IF EXISTS `contents`;
@@ -278,7 +279,8 @@ INSERT INTO `permissions` (`id`, `code`, `name`, `module`, `type`, `description`
 (27, 'log:data:any',         '日志数据-全部',       'log',       'data',   NULL, NOW(3)),
 (28, 'log:data:own',         '日志数据-仅自己',     'log',       'data',   NULL, NOW(3)),
 (29, 'sensitive:event:view', '查看规则命中审计',    'sensitive', 'action', NULL, NOW(3)),
-(30, 'sensitive:test',       '测试敏感词规则',      'sensitive', 'action', NULL, NOW(3));
+(30, 'sensitive:test',       '测试敏感词规则',      'sensitive', 'action', NULL, NOW(3)),
+(31, 'llm:test',             'AI 复核测试',         'llm',       'menu',   NULL, NOW(3));
 
 -- 5.3 注入角色-权限绑定
 -- admin: 拥有除 content:data:own / log:data:own 外的全部权限
@@ -286,7 +288,8 @@ INSERT INTO `role_permissions` (`role`, `permission_id`) VALUES
 ('admin', 1),  ('admin', 2),  ('admin', 3),  ('admin', 4),  ('admin', 5),  ('admin', 6),  ('admin', 7),
 ('admin', 8),  ('admin', 9),  ('admin', 10), ('admin', 11), ('admin', 12), ('admin', 13), ('admin', 14),
 ('admin', 15), ('admin', 16), ('admin', 17), ('admin', 18), ('admin', 19), ('admin', 20), ('admin', 21),
-('admin', 22), ('admin', 23), ('admin', 24), ('admin', 25), ('admin', 27), ('admin', 29), ('admin', 30);
+('admin', 22), ('admin', 23), ('admin', 24), ('admin', 25), ('admin', 27), ('admin', 29), ('admin', 30),
+('admin', 31);
 
 -- editor: dashboard/content 基础 + 修改密码 + 仅看自己的数据
 INSERT INTO `role_permissions` (`role`, `permission_id`) VALUES
@@ -300,7 +303,8 @@ INSERT INTO `menus` (`id`, `parent_id`, `name`, `path`, `icon`, `permission_id`,
 (3, NULL, '敏感词库',     '/sensitive-words', 'SafetyCertificateOutlined',  10, 30, true),
 (4, NULL, '审核工作台',   '/review',          'AuditOutlined',              15, 40, true),
 (5, NULL, '审核报表',     '/reports',         'BarChartOutlined',           20, 50, true),
-(6, NULL, '操作日志',     '/logs',            'HistoryOutlined',            22, 60, true);
+(6, NULL, '操作日志',     '/logs',            'HistoryOutlined',            22, 60, true),
+(7, NULL, 'AI 复核测试',  '/llm-test',        'RobotOutlined',              31, 70, true);
 
 -- 5.5 注入系统初始化敏感词 (14 条)
 INSERT INTO `sensitive_words` (`id`, `word`, `match_type`, `pattern`, `risk_level`, `replacement`, `category`, `enabled`, `positive_samples`, `negative_samples`, `created_at`, `updated_at`) VALUES

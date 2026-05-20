@@ -8,7 +8,7 @@
   - **三种匹配模式**：字面（literal）、自定义正则（regex，re2-wasm 编译杜绝 ReDoS）、内置凭证识别（credential，覆盖 AWS Key、JWT、SSH 私钥、API token、数据库连接串、bcrypt hash、中英文账密组合等 15+ 模板）
   - **上下文消歧**：用 jieba 分词识别复合词（攻击力 ≠ 攻击）、检测引号/代码块/反向劝阻关键词，给命中打 0-1 置信度而非二元命中
   - **规则治理**：每条规则带 version / baseConfidence / 正负样本，改一条规则可一键回归；命中事件全量入 `detection_events` 表，可按规则回溯
-  - **本地 AI 复核**（可选）：对中等置信度命中调本地 Gemma 3 4B 二次判定，区分「确实敏感 / 中性提及 / 引用 / 反向劝阻」
+  - **本地 AI 复核**（可选）：对中等置信度命中调本地 Gemma 4 e2b 二次判定，区分「确实敏感 / 中性提及 / 引用 / 反向劝阻」
 - **审核流**：编辑提审 → 管理员通过/驳回，附操作审计日志
 - **报表导出**：Word（关键指标 + 高风险列表）、Excel（全量明细）
 
@@ -19,7 +19,7 @@
 | 前端 | React 18、Vite、Ant Design 5、React Router、Zustand、Axios |
 | 后端 | Node.js ≥18、Express、TypeScript、Prisma 5、MySQL 8、JWT、Zod |
 | 检测引擎 | Aho-Corasick Trie + pinyin-pro 拼音/leet/形近变体 + @node-rs/jieba 分词 + re2-wasm 安全正则 + 内置凭证规则 + 置信度评分 |
-| AI 复核 | Ollama + Gemma 3 4B（可选，完全本地推理） |
+| AI 复核 | Ollama + Gemma 4 e2b（可选，完全本地推理） |
 | 报表 | `docx`（Word）、`exceljs`（Excel） |
 
 ## 环境要求
@@ -138,19 +138,19 @@ npx prisma generate
 
 ## 启用本地 AI 复核（可选）
 
-对中等置信度命中（0.5–0.85）调本地 Gemma 3 4B 二次判定，输出 `sensitive / neutral / quote / reverse`，前端紫色「AI 复核」角标显示。完全离线、零调用成本。
+对中等置信度命中（0.5–0.85）调本地 Gemma 4 e2b 二次判定，输出 `sensitive / neutral / quote / reverse`，前端紫色「AI 复核」角标显示。完全离线、零调用成本。
 
 ```pwsh
 # 1. 安装 Ollama
 # https://ollama.com/download
 
-# 2. 拉取模型（首次约 3.3GB / 显存约 5-6GB）
-ollama pull gemma3:4b
+# 2. 拉取模型（e2b 显存约 2-3GB，适合 6GB 以下显卡）
+ollama pull gemma4:e2b
 
 # 3. 在 server/.env 设
 #   LLM_JUDGE_ENABLED=true
 #   OLLAMA_HOST=http://localhost:11434
-#   LLM_JUDGE_MODEL=gemma3:4b
+#   LLM_JUDGE_MODEL=gemma4:e2b
 #   LLM_JUDGE_MAX_PER_DETECTION=3
 #   LLM_JUDGE_TIMEOUT_MS=5000
 
@@ -159,6 +159,8 @@ npm run dev:server
 ```
 
 若 Ollama 不可达，judge 自动 fallback 为「保守不放过」，主流程不挂；前端仍显示规则命中，仅少 AI 角标。中文判定不理想时把 `LLM_JUDGE_MODEL` 切到 `qwen2.5:3b` 即可。
+
+**测试页**：admin 登录后侧边栏会显示「AI 复核测试」菜单（路径 `/llm-test`），可粘贴任意文本快速观察检测全链路（规则命中 / 置信度 / AI 复核判定 / 耗时）。
 
 ## 目录结构
 

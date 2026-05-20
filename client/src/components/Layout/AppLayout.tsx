@@ -9,6 +9,7 @@ import {
   BarChartOutlined,
   HistoryOutlined,
   AppstoreOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMemo } from 'react';
@@ -24,6 +25,7 @@ const iconMap: Record<string, JSX.Element> = {
   AuditOutlined: <AuditOutlined />,
   BarChartOutlined: <BarChartOutlined />,
   HistoryOutlined: <HistoryOutlined />,
+  RobotOutlined: <RobotOutlined />,
 };
 
 function toMenuItems(nodes: MenuNode[]): MenuProps['items'] {

@@ -106,3 +106,26 @@ export interface AuthSession {
   permissions: string[];
   menus: MenuNode[];
 }
+
+export interface LLMStatus {
+  enabled: boolean;
+  model: string;
+  host: string;
+  timeoutMs: number;
+  maxPerDetection: number;
+}
+
+export interface LLMTestResult {
+  llm: {
+    enabled: boolean;
+    model: string;
+    judgedCount: number;
+  };
+  timing: {
+    baselineMs: number;
+    enhancedMs: number;
+    llmOverheadMs: number;
+  };
+  baseline: import('@text-guard/shared').DetectionResult;
+  enhanced: import('@text-guard/shared').DetectionResult;
+}

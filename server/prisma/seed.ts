@@ -51,6 +51,7 @@ const permissions: PermissionSeed[] = [
 
   { code: 'sensitive:event:view', name: '查看规则命中审计', module: 'sensitive', type: PermType.action },
   { code: 'sensitive:test', name: '测试敏感词规则', module: 'sensitive', type: PermType.action },
+  { code: 'llm:test', name: 'AI 复核测试', module: 'llm', type: PermType.menu },
 ];
 
 const editorPermissions = new Set([
@@ -81,6 +82,7 @@ const menus: MenuSeed[] = [
   { name: '审核工作台', path: '/review', icon: 'AuditOutlined', permissionCode: 'review:pending', sort: 40 },
   { name: '审核报表', path: '/reports', icon: 'BarChartOutlined', permissionCode: 'report:stats', sort: 50 },
   { name: '操作日志', path: '/logs', icon: 'HistoryOutlined', permissionCode: 'log:list', sort: 60 },
+  { name: 'AI 复核测试', path: '/llm-test', icon: 'RobotOutlined', permissionCode: 'llm:test', sort: 70 },
 ];
 
 interface SensitiveSeed {

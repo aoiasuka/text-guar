@@ -25,7 +25,7 @@ interface JudgeOptions {
 
 const LLM_ENABLED = () => process.env.LLM_JUDGE_ENABLED === 'true';
 const OLLAMA_HOST = () => process.env.OLLAMA_HOST || 'http://localhost:11434';
-const MODEL = () => process.env.LLM_JUDGE_MODEL || 'gemma3:4b';
+const MODEL = () => process.env.LLM_JUDGE_MODEL || 'gemma4:e2b';
 const TIMEOUT_MS = () => Number(process.env.LLM_JUDGE_TIMEOUT_MS || 5000);
 const MAX_PER_DETECTION = () => Number(process.env.LLM_JUDGE_MAX_PER_DETECTION || 3);
 const CONTEXT_WINDOW = 80;

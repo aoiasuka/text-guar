@@ -15,6 +15,7 @@ import { ReviewListPage } from '@/pages/Review/ReviewListPage.js';
 import { ReviewDetailPage } from '@/pages/Review/ReviewDetailPage.js';
 import { ReportsPage } from '@/pages/Reports/ReportsPage.js';
 import { LogsPage } from '@/pages/Logs/LogsPage.js';
+import { LLMTestPage } from '@/pages/LLMTest/LLMTestPage.js';
 import { NotFoundPage } from '@/pages/NotFoundPage.js';
 
 export default function App() {
@@ -58,6 +59,10 @@ export default function App() {
 
               <Route element={<RequirePermission code="log:list" />}>
                 <Route path="/logs" element={<LogsPage />} />
+              </Route>
+
+              <Route element={<RequirePermission code="llm:test" />}>
+                <Route path="/llm-test" element={<LLMTestPage />} />
               </Route>
 
               <Route path="*" element={<NotFoundPage />} />

@@ -5,6 +5,7 @@ import sensitiveRoutes from './sensitive.routes.js';
 import reviewRoutes from './review.routes.js';
 import reportRoutes from './report.routes.js';
 import logRoutes from './log.routes.js';
+import llmRoutes from './llm.routes.js';
 
 const router = Router();
 
@@ -14,5 +15,6 @@ router.use('/sensitive-words', sensitiveRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/reports', reportRoutes);
 router.use('/logs', logRoutes);
+router.use('/llm', llmRoutes);
 
 export default router;

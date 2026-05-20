@@ -4,6 +4,8 @@ import type {
   AuthSession,
   Content,
   DetectionEvent,
+  LLMStatus,
+  LLMTestResult,
   MenuNode,
   OperationLog,
   PageResult,
@@ -111,4 +113,9 @@ export const reportApi = {
 export const logApi = {
   list: (params?: Record<string, unknown> | object) =>
     request.get<PageResult<OperationLog>>('/logs', { params }),
+};
+
+export const llmApi = {
+  status: () => request.get<LLMStatus>('/llm/status'),
+  test: (text: string) => request.post<LLMTestResult>('/llm/test', { text }),
 };
