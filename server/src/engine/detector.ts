@@ -1,9 +1,19 @@
 import type { DetectionMatch, DetectionResult, RiskLevel } from '@text-guard/shared';
 import { applyReplacement } from './filter.js';
-import { credentialPatterns } from './credential-rules.js';
-import { mapToOriginalRange, normalize } from './normalizer.js';
+import { credentialRules } from './credential-rules.js';
+import { disambiguate, type ContextScope } from './context-disambiguator.js';
+import { judgeUnsure, isLLMEnabled } from './llm-judge.js';
+import {
+  expandVariants,
+  mapToOriginalRange,
+  normalize,
+  type NormalizedText,
+  type VariantCandidate,
+} from './normalizer.js';
+import { pinyin } from 'pinyin-pro';
 import { scanByRegex } from './regex-rules.js';
-import { getFilterStrategy, getRiskLevel, riskWeight } from './risk-scorer.js';
+import { compileUserPattern, RegexSafeError, type CompiledPattern } from './regex-safe.js';
+import { CONFIDENCE_DROP_BELOW, getFilterStrategy, getRiskLevel, scoreMatches } from './risk-scorer.js';
 import { applyWhitelist } from './whitelist.js';
 
 export type SensitiveMatchMode = 'literal' | 'regex' | 'credential';
@@ -15,6 +25,9 @@ export interface SensitiveWordEntry {
   riskLevel: RiskLevel;
   replacement: string;
   category: string;
+  baseConfidence?: number;
+  variantMatch?: boolean;
+  contextScope?: ContextScope;
 }
 
 interface LiteralEntry {
@@ -22,14 +35,18 @@ interface LiteralEntry {
   riskLevel: RiskLevel;
   replacement: string;
   category: string;
+  baseConfidence: number;
+  variantMatch: boolean;
+  contextScope: ContextScope;
 }
 
 interface RegexEntry {
   word: string;
-  regexp: RegExp;
+  compiled: CompiledPattern;
   riskLevel: RiskLevel;
   replacement: string;
   category: string;
+  baseConfidence: number;
 }
 
 interface CredentialMeta {
@@ -37,6 +54,7 @@ interface CredentialMeta {
   riskLevel: RiskLevel;
   replacement: string;
   category: string;
+  baseConfidence: number;
 }
 
 interface TrieNode {
@@ -51,6 +69,8 @@ function createNode(): TrieNode {
 
 const MAX_CACHE = 200;
 const MAX_CACHE_TEXT_LEN = 4096;
+const VARIANT_CONFIDENCE_DISCOUNT = 0.75;
+const PINYIN_FULL_MIN_LEN = 4; // 仅命中 ≥4 字母（约 2 个汉字）的拼音才认，避免单字误报
 
 const riskRank: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3 };
 
@@ -58,7 +78,8 @@ export class SensitiveDetector {
   private literalWords: LiteralEntry[] = [];
   private regexEntries: RegexEntry[] = [];
   private credentialMeta: CredentialMeta | null = null;
-  private root: TrieNode = createNode();
+  private plainRoot: TrieNode = createNode();
+  private pinyinRoot: TrieNode = createNode();
   private version = 0;
   private cache = new Map<string, DetectionResult>();
 
@@ -69,26 +90,32 @@ export class SensitiveDetector {
 
     for (const item of words) {
       const matchType = item.matchType || 'literal';
+      const baseConfidence = item.baseConfidence ?? 1;
       if (matchType === 'literal') {
         literal.push({
           word: item.word,
           riskLevel: item.riskLevel,
           replacement: item.replacement,
           category: item.category,
+          baseConfidence,
+          variantMatch: item.variantMatch !== false,
+          contextScope: item.contextScope ?? 'strict',
         });
       } else if (matchType === 'regex') {
         if (!item.pattern) continue;
         try {
           regex.push({
             word: item.word,
-            regexp: compileRegex(item.pattern),
+            compiled: compileUserPattern(item.pattern),
             riskLevel: item.riskLevel,
             replacement: item.replacement,
             category: item.category,
+            baseConfidence,
           });
         } catch (error) {
+          const reason = error instanceof RegexSafeError ? error.reason : 'invalid';
           console.warn(
-            `[detector] 正则规则编译失败 word=${item.word} pattern=${item.pattern}：`,
+            `[detector] 正则规则编译失败 word=${item.word} pattern=${item.pattern} (${reason})：`,
             error instanceof Error ? error.message : error,
           );
         }
@@ -98,6 +125,7 @@ export class SensitiveDetector {
           riskLevel: item.riskLevel,
           replacement: item.replacement || '[凭证]',
           category: item.category,
+          baseConfidence,
         };
         if (!credentialBest || riskRank[meta.riskLevel] > riskRank[credentialBest.riskLevel]) {
           credentialBest = meta;
@@ -108,9 +136,19 @@ export class SensitiveDetector {
     this.literalWords = literal.sort((a, b) => b.word.length - a.word.length);
     this.regexEntries = regex;
     this.credentialMeta = credentialBest;
-    this.root = createNode();
-    for (const word of this.literalWords) this.insertLiteral(word);
-    this.buildFailureLinks();
+    this.plainRoot = createNode();
+    this.pinyinRoot = createNode();
+    for (const entry of this.literalWords) {
+      this.insertLiteral(this.plainRoot, entry.word.toLowerCase(), entry);
+      if (entry.variantMatch) {
+        const pinyinKey = toPinyinKey(entry.word);
+        if (pinyinKey.length >= PINYIN_FULL_MIN_LEN) {
+          this.insertLiteral(this.pinyinRoot, pinyinKey, entry);
+        }
+      }
+    }
+    this.buildFailureLinks(this.plainRoot);
+    this.buildFailureLinks(this.pinyinRoot);
     this.version += 1;
     this.cache.clear();
   }
@@ -130,13 +168,27 @@ export class SensitiveDetector {
 
     const normalized = normalize(text);
     const wordMatches = this.scanLiterals(text, normalized);
+    const variantMatches = this.scanVariants(text, normalized);
     const regexMatches = scanByRegex(text);
     const customRegexMatches = this.scanCustomRegex(text);
     const credentialMatches = this.scanCredentials(text);
-    const all = [...wordMatches, ...regexMatches, ...customRegexMatches, ...credentialMatches];
+    const all = [
+      ...wordMatches,
+      ...variantMatches,
+      ...regexMatches,
+      ...customRegexMatches,
+      ...credentialMatches,
+    ];
     const merged = mergeOverlapping(all, text);
-    const filtered = applyWhitelist(text, merged);
-    const score = filtered.reduce((sum, item) => sum + riskWeight[item.riskLevel], 0);
+    const whitelisted = applyWhitelist(text, merged);
+    // 上下文消歧：在过滤前调整 confidence
+    // 取最严格的 scope（多条规则混合时按 strict > lenient > global）
+    const effectiveScope = this.literalWords.length
+      ? mostStrictScope(this.literalWords.map((w) => w.contextScope))
+      : 'strict';
+    const disambiguated = disambiguate(text, whitelisted, { defaultScope: effectiveScope });
+    const filtered = disambiguated.filter((m) => (m.confidence ?? 1) >= CONFIDENCE_DROP_BELOW);
+    const score = Math.round(scoreMatches(filtered));
     const level = getRiskLevel(score);
     const strategy = getFilterStrategy(score);
     const filteredText = applyReplacement(text, filtered);
@@ -163,40 +215,53 @@ export class SensitiveDetector {
     return result;
   }
 
-  private scanLiterals(
-    original: string,
-    normalized: ReturnType<typeof normalize>,
-  ): DetectionMatch[] {
+  private scanLiterals(original: string, normalized: NormalizedText): DetectionMatch[] {
     if (this.literalWords.length === 0) return [];
+    return scanTrie(this.plainRoot, normalized.text, (item, nStart, nEnd) => {
+      const range = mapToOriginalRange(normalized, nStart, nEnd);
+      return {
+        type: 'word',
+        word: original.slice(range.start, range.end),
+        riskLevel: item.riskLevel,
+        category: item.category,
+        replacement: item.replacement || '***',
+        start: range.start,
+        end: range.end,
+        source: 'literal',
+        confidence: item.baseConfidence,
+      };
+    });
+  }
 
+  private scanVariants(original: string, normalized: NormalizedText): DetectionMatch[] {
+    if (this.literalWords.length === 0) return [];
+    const candidates = expandVariants(normalized);
     const matches: DetectionMatch[] = [];
-    let node = this.root;
 
-    for (let index = 0; index < normalized.text.length; index += 1) {
-      const char = normalized.text[index];
-      while (node !== this.root && !node.next.has(char)) {
-        node = node.fail || this.root;
-      }
-      node = node.next.get(char) || this.root;
-
-      if (node.outputs.length === 0) continue;
-      for (const item of node.outputs) {
-        const normalizedStart = index - item.word.length + 1;
-        const normalizedEnd = index + 1;
-        const range = mapToOriginalRange(normalized, normalizedStart, normalizedEnd);
-        const hit = original.slice(range.start, range.end);
-        matches.push({
+    for (const cand of candidates) {
+      const usePinyin = cand.label === 'pinyin_full' || cand.label === 'pinyin_initial';
+      const root = usePinyin ? this.pinyinRoot : this.plainRoot;
+      const hits = scanTrie(root, cand.text, (item, nStart, nEnd) => {
+        const range = mapToOriginalRange(cand, nStart, nEnd);
+        if (usePinyin && nEnd - nStart < PINYIN_FULL_MIN_LEN) return null;
+        const trimmed = trimNoiseEdges(original, range.start, range.end);
+        if (trimmed.end <= trimmed.start) return null;
+        const word = original.slice(trimmed.start, trimmed.end);
+        return {
           type: 'word',
-          word: hit,
+          word,
           riskLevel: item.riskLevel,
           category: item.category,
           replacement: item.replacement || '***',
-          start: range.start,
-          end: range.end,
-        });
-      }
+          start: trimmed.start,
+          end: trimmed.end,
+          source: 'literal_variant',
+          confidence: item.baseConfidence * VARIANT_CONFIDENCE_DISCOUNT,
+          reason: `变体匹配·${cand.label}`,
+        };
+      });
+      matches.push(...hits);
     }
-
     return matches;
   }
 
@@ -204,18 +269,17 @@ export class SensitiveDetector {
     if (this.regexEntries.length === 0) return [];
     const matches: DetectionMatch[] = [];
     for (const rule of this.regexEntries) {
-      rule.regexp.lastIndex = 0;
-      for (const hit of text.matchAll(rule.regexp)) {
-        const raw = hit[0];
-        const start = hit.index ?? 0;
+      for (const hit of rule.compiled.matchAll(text)) {
         matches.push({
           type: 'regex',
-          word: raw,
+          word: hit.match,
           riskLevel: rule.riskLevel,
           category: rule.category,
           replacement: rule.replacement || '***',
-          start,
-          end: start + raw.length,
+          start: hit.index,
+          end: hit.index + hit.match.length,
+          source: 'regex',
+          confidence: rule.baseConfidence * 0.95,
         });
       }
     }
@@ -224,52 +288,58 @@ export class SensitiveDetector {
 
   private scanCredentials(text: string): DetectionMatch[] {
     if (!this.credentialMeta) return [];
-    const meta = this.credentialMeta;
+    const userMeta = this.credentialMeta; // 词库 credential 记录覆盖规则默认 meta
     const matches: DetectionMatch[] = [];
-    for (const pattern of credentialPatterns) {
-      pattern.lastIndex = 0;
-      for (const hit of text.matchAll(pattern)) {
+    for (const rule of credentialRules) {
+      rule.pattern.lastIndex = 0;
+      for (const hit of text.matchAll(rule.pattern)) {
         const raw = hit[0];
         const start = hit.index ?? 0;
+        // 优先用每条规则自带的 category/risk/replacement，缺省回退到用户配置的 userMeta
+        const riskLevel = rule.baseRisk ?? userMeta.riskLevel;
+        const replacement = rule.defaultReplacement || userMeta.replacement;
+        const category = rule.category || userMeta.category;
         matches.push({
           type: 'regex',
           word: raw,
-          riskLevel: meta.riskLevel,
-          category: meta.category,
-          replacement: meta.replacement,
+          riskLevel,
+          category,
+          replacement,
           start,
           end: start + raw.length,
+          source: 'credential',
+          confidence: userMeta.baseConfidence * 0.9,
+          reason: `凭证·${rule.id}`,
         });
       }
     }
     return matches;
   }
 
-  private insertLiteral(item: LiteralEntry) {
-    let node = this.root;
-    for (const char of item.word.toLowerCase()) {
+  private insertLiteral(root: TrieNode, key: string, item: LiteralEntry) {
+    let node = root;
+    for (const char of key) {
       const next = node.next.get(char) || createNode();
       node.next.set(char, next);
       node = next;
     }
-    node.outputs.push(item);
+    node.outputs.push({ ...item, word: key });
   }
 
-  private buildFailureLinks() {
+  private buildFailureLinks(root: TrieNode) {
     const queue: TrieNode[] = [];
-    for (const child of this.root.next.values()) {
-      child.fail = this.root;
+    for (const child of root.next.values()) {
+      child.fail = root;
       queue.push(child);
     }
-
     while (queue.length) {
       const current = queue.shift()!;
       for (const [char, child] of current.next) {
-        let fail = current.fail || this.root;
-        while (fail !== this.root && !fail.next.has(char)) {
-          fail = fail.fail || this.root;
+        let fail = current.fail || root;
+        while (fail !== root && !fail.next.has(char)) {
+          fail = fail.fail || root;
         }
-        child.fail = fail.next.get(char) || this.root;
+        child.fail = fail.next.get(char) || root;
         child.outputs = [...child.outputs, ...child.fail.outputs];
         queue.push(child);
       }
@@ -277,14 +347,62 @@ export class SensitiveDetector {
   }
 }
 
-function compileRegex(pattern: string): RegExp {
-  const flagMatch = /^\(\?([imsu]+)\)/.exec(pattern);
-  if (flagMatch) {
-    const flags = flagMatch[1];
-    const body = pattern.slice(flagMatch[0].length);
-    return new RegExp(body, `${flags}g`);
+// Aho-Corasick 通用扫描：mapHit 返回 null 表示丢弃这次命中
+function scanTrie(
+  root: TrieNode,
+  text: string,
+  mapHit: (item: LiteralEntry, nStart: number, nEnd: number) => DetectionMatch | null,
+): DetectionMatch[] {
+  if (root.next.size === 0 || !text) return [];
+  const matches: DetectionMatch[] = [];
+  let node = root;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    while (node !== root && !node.next.has(char)) {
+      node = node.fail || root;
+    }
+    node = node.next.get(char) || root;
+    if (node.outputs.length === 0) continue;
+    for (const item of node.outputs) {
+      const nStart = index - item.word.length + 1;
+      const nEnd = index + 1;
+      const m = mapHit(item, nStart, nEnd);
+      if (m) matches.push(m);
+    }
   }
-  return new RegExp(pattern, 'g');
+  return matches;
+}
+
+function toPinyinKey(word: string): string {
+  // 把中文词条转成纯拼音字母串，非中文字符按小写保留
+  const chars: string[] = [];
+  for (const ch of word) {
+    if (/[一-鿿]/.test(ch)) {
+      const py = pinyin(ch, { toneType: 'none', type: 'string' }).replace(/\s+/g, '');
+      chars.push(py || ch);
+    } else {
+      chars.push(ch.toLowerCase());
+    }
+  }
+  return chars.join('');
+}
+
+// 变体扫描映射回原文后，trim 两端的噪声字符（空格/标点干扰），让命中片段紧凑
+const NOISE_TRIM_RE = /[\s·_\-*\.・|/\\@#!$%^&+=?`~,;:"']/;
+function trimNoiseEdges(text: string, start: number, end: number): { start: number; end: number } {
+  let s = start;
+  let e = end;
+  while (e > s && NOISE_TRIM_RE.test(text[e - 1])) e -= 1;
+  while (s < e && NOISE_TRIM_RE.test(text[s])) s += 1;
+  return { start: s, end: e };
+}
+
+// 默认对所有 literal 词条启用变体匹配；上游通过 entry.variantMatch=false 关闭
+// 多条规则混合时取最严格的 scope（strict 优先，其次 lenient，最后 global）
+function mostStrictScope(scopes: ContextScope[]): ContextScope {
+  if (scopes.includes('strict')) return 'strict';
+  if (scopes.includes('lenient')) return 'lenient';
+  return 'global';
 }
 
 function compareForMerge(a: DetectionMatch, b: DetectionMatch) {
@@ -312,11 +430,14 @@ export function mergeOverlapping(matches: DetectionMatch[], text?: string): Dete
       matchRank > lastRank ||
       (matchRank === lastRank && match.end - match.start > last.end - last.start);
     const base = keepMatchMeta ? match : last;
+    // 合并后置信度取两者较高（同一片段最强证据）
+    const bestConfidence = Math.max(match.confidence ?? 1, last.confidence ?? 1);
     result[result.length - 1] = {
       ...base,
       start: unionStart,
       end: unionEnd,
       word: text ? text.slice(unionStart, unionEnd) : base.word,
+      confidence: bestConfidence,
     };
   }
   return result;
@@ -334,3 +455,29 @@ function emptyResult(text: string): DetectionResult {
 }
 
 export const detector = new SensitiveDetector();
+
+/**
+ * 异步检测：在 detector.detect 之上叠加 LLM 二次判定
+ * - LLM_JUDGE_ENABLED=false 时与 detect() 等价
+ * - 启用时对中等置信度命中调本地 Ollama 二次判定，调整 confidence 后重算 score/level/strategy
+ */
+export async function detectWithLLM(text: string): Promise<DetectionResult> {
+  const base = detector.detect(text);
+  if (!isLLMEnabled() || base.matches.length === 0) return base;
+  const judged = await judgeUnsure(base.matches, text);
+  const filtered = judged.filter((m) => (m.confidence ?? 1) >= CONFIDENCE_DROP_BELOW);
+  const score = Math.round(scoreMatches(filtered));
+  const level = getRiskLevel(score);
+  const strategy = getFilterStrategy(score);
+  const filteredText = applyReplacement(text, filtered);
+  return {
+    matches: filtered,
+    score,
+    level,
+    strategy,
+    filteredText,
+    summary: filtered.length
+      ? `命中 ${filtered.length} 项风险，评分 ${score}，建议策略：${strategy}`
+      : '未发现敏感信息',
+  };
+}

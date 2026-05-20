@@ -66,5 +66,27 @@ router.delete(
   validate(idParamSchema, 'params'),
   wrap(ctrl.deleteController),
 );
+router.get(
+  '/:id',
+  auth,
+  requirePermission('sensitive:list'),
+  validate(idParamSchema, 'params'),
+  wrap(ctrl.detailController),
+);
+router.get(
+  '/:id/events',
+  auth,
+  requirePermission('sensitive:event:view'),
+  validate(idParamSchema, 'params'),
+  validate(ctrl.eventsQuerySchema, 'query'),
+  wrap(ctrl.eventsController),
+);
+router.post(
+  '/:id/test',
+  auth,
+  requirePermission('sensitive:test'),
+  validate(idParamSchema, 'params'),
+  wrap(ctrl.testController),
+);
 
 export default router;

@@ -3,9 +3,11 @@ import request from './request.js';
 import type {
   AuthSession,
   Content,
+  DetectionEvent,
   MenuNode,
   OperationLog,
   PageResult,
+  RuleTestResult,
   SensitiveWord,
   SubmitContentResult,
   User,
@@ -33,11 +35,18 @@ export const contentApi = {
   detect: (text: string) => request.post<DetectionResult>('/contents/detect', { text }),
 };
 
-export type SensitiveWordPayload = Omit<SensitiveWord, 'id' | 'enabled' | 'createdAt'>;
+export type SensitiveWordPayload = Omit<
+  SensitiveWord,
+  'id' | 'enabled' | 'createdAt' | 'updatedAt' | 'version' | 'positiveSamples' | 'negativeSamples'
+> & {
+  positiveSamples?: string[];
+  negativeSamples?: string[];
+};
 
 export const sensitiveApi = {
   list: (params?: Record<string, unknown>) =>
     request.get<PageResult<SensitiveWord>>('/sensitive-words', { params }),
+  detail: (id: number) => request.get<SensitiveWord>(`/sensitive-words/${id}`),
   create: (data: SensitiveWordPayload) => request.post<SensitiveWord>('/sensitive-words', data),
   update: (id: number, data: SensitiveWordPayload) =>
     request.put<SensitiveWord>(`/sensitive-words/${id}`, data),
@@ -48,6 +57,9 @@ export const sensitiveApi = {
     request.post<{ count: number }>('/sensitive-words/batch/toggle', { ids, enabled }),
   batchRemove: (ids: number[]) =>
     request.post<{ count: number }>('/sensitive-words/batch/delete', { ids }),
+  events: (id: number, params?: Record<string, unknown>) =>
+    request.get<PageResult<DetectionEvent>>(`/sensitive-words/${id}/events`, { params }),
+  test: (id: number) => request.post<RuleTestResult>(`/sensitive-words/${id}/test`),
 };
 
 export const reviewApi = {

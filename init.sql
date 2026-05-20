@@ -80,7 +80,14 @@ CREATE TABLE `sensitive_words` (
   `replacement` VARCHAR(100) NOT NULL DEFAULT '***' COMMENT '替换词/脱敏显示词',
   `category` VARCHAR(50) NOT NULL DEFAULT '' COMMENT '敏感词分类',
   `enabled` BOOLEAN NOT NULL DEFAULT true COMMENT '是否启用',
+  `version` INTEGER NOT NULL DEFAULT 1 COMMENT '规则版本号，每次更新自增',
+  `base_confidence` DOUBLE NOT NULL DEFAULT 1.0 COMMENT '基础置信度上限 0-1',
+  `variant_match` BOOLEAN NOT NULL DEFAULT true COMMENT '是否启用反绕过变体匹配',
+  `context_scope` ENUM('strict', 'lenient', 'global') NOT NULL DEFAULT 'strict' COMMENT '上下文判定范围',
+  `positive_samples` TEXT NULL COMMENT '应命中样本 JSON 数组',
+  `negative_samples` TEXT NULL COMMENT '不应命中样本 JSON 数组',
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
 
   UNIQUE INDEX `sensitive_words_word_key`(`word`),
   INDEX `sensitive_words_enabled_idx`(`enabled`),
@@ -161,6 +168,28 @@ CREATE TABLE `menus` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='前端菜单定义表';
 
+-- 3.9 检测命中事件表 (detection_events)
+CREATE TABLE `detection_events` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT COMMENT '事件ID',
+  `content_id` INTEGER NULL COMMENT '关联内容ID（detect 接口为 NULL）',
+  `word_id` INTEGER NULL COMMENT '关联敏感词规则ID（内置 PII 规则为 NULL）',
+  `word_version` INTEGER NULL COMMENT '命中时的规则版本',
+  `rule_source` VARCHAR(40) NOT NULL COMMENT '规则来源：literal/literal_variant/regex/credential/llm',
+  `hit_text` VARCHAR(500) NOT NULL COMMENT '命中文本片段',
+  `start` INTEGER NOT NULL COMMENT '命中起点',
+  `end` INTEGER NOT NULL COMMENT '命中终点',
+  `risk_level` ENUM('low', 'medium', 'high') NOT NULL COMMENT '风险等级',
+  `confidence` DOUBLE NOT NULL COMMENT '置信度 0-1',
+  `judge_verdict` VARCHAR(40) NULL COMMENT 'LLM 判定结论',
+  `reason` VARCHAR(200) NULL COMMENT '置信度调整原因',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '事件时间',
+
+  INDEX `detection_events_content_id_idx`(`content_id`),
+  INDEX `detection_events_word_id_created_at_idx`(`word_id`, `created_at`),
+  INDEX `detection_events_created_at_idx`(`created_at`),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='检测命中事件审计';
+
 
 -- -----------------------------------------------------------------------------
 -- 4. 添加外键约束
@@ -200,6 +229,11 @@ ALTER TABLE `menus`
   FOREIGN KEY (`permission_id`) REFERENCES `permissions`(`id`)
   ON DELETE SET NULL ON UPDATE CASCADE;
 
+ALTER TABLE `detection_events`
+  ADD CONSTRAINT `detection_events_word_id_fkey`
+  FOREIGN KEY (`word_id`) REFERENCES `sensitive_words`(`id`)
+  ON DELETE SET NULL ON UPDATE CASCADE;
+
 
 -- -----------------------------------------------------------------------------
 -- 5. 初始化演示数据 (种子数据)
@@ -215,34 +249,36 @@ INSERT INTO `users` (`id`, `username`, `password_hash`, `role`, `created_at`) VA
 
 -- 5.2 注入权限定义
 INSERT INTO `permissions` (`id`, `code`, `name`, `module`, `type`, `description`, `created_at`) VALUES
-(1,  'dashboard:view',     '查看工作台',          'dashboard', 'menu',   NULL, NOW(3)),
-(2,  'content:list',       '内容列表',            'content',   'menu',   NULL, NOW(3)),
-(3,  'content:detail',     '内容详情',            'content',   'action', NULL, NOW(3)),
-(4,  'content:create',     '新建内容',            'content',   'action', NULL, NOW(3)),
-(5,  'content:update',     '编辑内容',            'content',   'action', NULL, NOW(3)),
-(6,  'content:delete',     '删除内容',            'content',   'action', NULL, NOW(3)),
-(7,  'content:submit',     '提交审核',            'content',   'action', NULL, NOW(3)),
-(8,  'content:pin',        '内容置顶',            'content',   'action', NULL, NOW(3)),
-(9,  'content:detect',     '调用检测',            'content',   'action', NULL, NOW(3)),
-(10, 'sensitive:list',     '敏感词列表',          'sensitive', 'menu',   NULL, NOW(3)),
-(11, 'sensitive:create',   '新增敏感词',          'sensitive', 'action', NULL, NOW(3)),
-(12, 'sensitive:update',   '编辑敏感词',          'sensitive', 'action', NULL, NOW(3)),
-(13, 'sensitive:delete',   '删除敏感词',          'sensitive', 'action', NULL, NOW(3)),
-(14, 'sensitive:toggle',   '启用/禁用敏感词',     'sensitive', 'action', NULL, NOW(3)),
-(15, 'review:pending',     '待审核队列',          'review',    'menu',   NULL, NOW(3)),
-(16, 'review:history',     '审核历史',            'review',    'action', NULL, NOW(3)),
-(17, 'review:approve',     '审核通过',            'review',    'action', NULL, NOW(3)),
-(18, 'review:reject',      '审核驳回',            'review',    'action', NULL, NOW(3)),
-(19, 'review:batch',       '批量审核',            'review',    'action', NULL, NOW(3)),
-(20, 'report:stats',       '查看统计',            'report',    'menu',   NULL, NOW(3)),
-(21, 'report:export',      '导出报表',            'report',    'action', NULL, NOW(3)),
-(22, 'log:list',           '查看操作日志',        'log',       'menu',   NULL, NOW(3)),
-(23, 'user:register',      '注册用户',            'user',      'action', NULL, NOW(3)),
-(24, 'user:password',      '修改密码',            'user',      'action', NULL, NOW(3)),
-(25, 'content:data:any',   '内容数据-全部',       'content',   'data',   NULL, NOW(3)),
-(26, 'content:data:own',   '内容数据-仅自己',     'content',   'data',   NULL, NOW(3)),
-(27, 'log:data:any',       '日志数据-全部',       'log',       'data',   NULL, NOW(3)),
-(28, 'log:data:own',       '日志数据-仅自己',     'log',       'data',   NULL, NOW(3));
+(1,  'dashboard:view',       '查看工作台',          'dashboard', 'menu',   NULL, NOW(3)),
+(2,  'content:list',         '内容列表',            'content',   'menu',   NULL, NOW(3)),
+(3,  'content:detail',       '内容详情',            'content',   'action', NULL, NOW(3)),
+(4,  'content:create',       '新建内容',            'content',   'action', NULL, NOW(3)),
+(5,  'content:update',       '编辑内容',            'content',   'action', NULL, NOW(3)),
+(6,  'content:delete',       '删除内容',            'content',   'action', NULL, NOW(3)),
+(7,  'content:submit',       '提交审核',            'content',   'action', NULL, NOW(3)),
+(8,  'content:pin',          '内容置顶',            'content',   'action', NULL, NOW(3)),
+(9,  'content:detect',       '调用检测',            'content',   'action', NULL, NOW(3)),
+(10, 'sensitive:list',       '敏感词列表',          'sensitive', 'menu',   NULL, NOW(3)),
+(11, 'sensitive:create',     '新增敏感词',          'sensitive', 'action', NULL, NOW(3)),
+(12, 'sensitive:update',     '编辑敏感词',          'sensitive', 'action', NULL, NOW(3)),
+(13, 'sensitive:delete',     '删除敏感词',          'sensitive', 'action', NULL, NOW(3)),
+(14, 'sensitive:toggle',     '启用/禁用敏感词',     'sensitive', 'action', NULL, NOW(3)),
+(15, 'review:pending',       '待审核队列',          'review',    'menu',   NULL, NOW(3)),
+(16, 'review:history',       '审核历史',            'review',    'action', NULL, NOW(3)),
+(17, 'review:approve',       '审核通过',            'review',    'action', NULL, NOW(3)),
+(18, 'review:reject',        '审核驳回',            'review',    'action', NULL, NOW(3)),
+(19, 'review:batch',         '批量审核',            'review',    'action', NULL, NOW(3)),
+(20, 'report:stats',         '查看统计',            'report',    'menu',   NULL, NOW(3)),
+(21, 'report:export',        '导出报表',            'report',    'action', NULL, NOW(3)),
+(22, 'log:list',             '查看操作日志',        'log',       'menu',   NULL, NOW(3)),
+(23, 'user:register',        '注册用户',            'user',      'action', NULL, NOW(3)),
+(24, 'user:password',        '修改密码',            'user',      'action', NULL, NOW(3)),
+(25, 'content:data:any',     '内容数据-全部',       'content',   'data',   NULL, NOW(3)),
+(26, 'content:data:own',     '内容数据-仅自己',     'content',   'data',   NULL, NOW(3)),
+(27, 'log:data:any',         '日志数据-全部',       'log',       'data',   NULL, NOW(3)),
+(28, 'log:data:own',         '日志数据-仅自己',     'log',       'data',   NULL, NOW(3)),
+(29, 'sensitive:event:view', '查看规则命中审计',    'sensitive', 'action', NULL, NOW(3)),
+(30, 'sensitive:test',       '测试敏感词规则',      'sensitive', 'action', NULL, NOW(3));
 
 -- 5.3 注入角色-权限绑定
 -- admin: 拥有除 content:data:own / log:data:own 外的全部权限
@@ -250,7 +286,7 @@ INSERT INTO `role_permissions` (`role`, `permission_id`) VALUES
 ('admin', 1),  ('admin', 2),  ('admin', 3),  ('admin', 4),  ('admin', 5),  ('admin', 6),  ('admin', 7),
 ('admin', 8),  ('admin', 9),  ('admin', 10), ('admin', 11), ('admin', 12), ('admin', 13), ('admin', 14),
 ('admin', 15), ('admin', 16), ('admin', 17), ('admin', 18), ('admin', 19), ('admin', 20), ('admin', 21),
-('admin', 22), ('admin', 23), ('admin', 24), ('admin', 25), ('admin', 27);
+('admin', 22), ('admin', 23), ('admin', 24), ('admin', 25), ('admin', 27), ('admin', 29), ('admin', 30);
 
 -- editor: dashboard/content 基础 + 修改密码 + 仅看自己的数据
 INSERT INTO `role_permissions` (`role`, `permission_id`) VALUES
@@ -267,21 +303,21 @@ INSERT INTO `menus` (`id`, `parent_id`, `name`, `path`, `icon`, `permission_id`,
 (6, NULL, '操作日志',     '/logs',            'HistoryOutlined',            22, 60, true);
 
 -- 5.5 注入系统初始化敏感词 (14 条)
-INSERT INTO `sensitive_words` (`id`, `word`, `match_type`, `pattern`, `risk_level`, `replacement`, `category`, `enabled`, `created_at`) VALUES
-(1,  '泄密',         'literal',    NULL,                                                                                                          'high',   '[保密信息]', '安全', true, NOW(3)),
-(2,  '攻击',         'literal',    NULL,                                                                                                          'high',   '***',        '安全', true, NOW(3)),
-(3,  '暴力',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, NOW(3)),
-(4,  '诈骗',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, NOW(3)),
-(5,  '赌博',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, NOW(3)),
-(6,  '违法',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, NOW(3)),
-(7,  '内部资料',     'literal',    NULL,                                                                                                          'medium', '[内部资料]', '保密', true, NOW(3)),
-(8,  '客户名单',     'literal',    NULL,                                                                                                          'medium', '[客户名单]', '保密', true, NOW(3)),
-(9,  '账号密码',     'credential', NULL,                                                                                                          'medium', '[凭证]',     '隐私', true, NOW(3)),
-(10, '转账',         'literal',    NULL,                                                                                                          'medium', '***',        '金融', true, NOW(3)),
-(11, '推广',         'literal',    NULL,                                                                                                          'low',    '***',        '营销', true, NOW(3)),
-(12, '广告',         'literal',    NULL,                                                                                                          'low',    '***',        '营销', true, NOW(3)),
-(13, '测试敏感词',   'literal',    NULL,                                                                                                          'low',    '***',        '测试', true, NOW(3)),
-(14, '弱密码',       'regex',      '(?i)(?:password|passwd|pwd|pass)\\s*[:=]\\s*(?:123456|admin|admin123|root|root123|password|qwerty)',         'high',   '[弱密码]',   '隐私', true, NOW(3));
+INSERT INTO `sensitive_words` (`id`, `word`, `match_type`, `pattern`, `risk_level`, `replacement`, `category`, `enabled`, `positive_samples`, `negative_samples`, `created_at`, `updated_at`) VALUES
+(1,  '泄密',         'literal',    NULL,                                                                                                          'high',   '[保密信息]', '安全', true, '["公司机密被泄密","他向竞争对手泄密"]',                                       '["保密协议"]',                                                  NOW(3), NOW(3)),
+(2,  '攻击',         'literal',    NULL,                                                                                                          'high',   '***',        '安全', true, '["黑客攻击系统","发起网络攻击"]',                                            '["攻击力很强","攻克难题"]',                                       NOW(3), NOW(3)),
+(3,  '暴力',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, '["实施暴力","暴力倾向"]',                                                    '["暴力美学讨论"]',                                                NOW(3), NOW(3)),
+(4,  '诈骗',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, '["诈骗团伙","识破诈骗"]',                                                    '["反诈骗宣传"]',                                                  NOW(3), NOW(3)),
+(5,  '赌博',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, '["他在赌博","组织赌博"]',                                                    '["赌一把","赌徒心态"]',                                           NOW(3), NOW(3)),
+(6,  '违法',         'literal',    NULL,                                                                                                          'high',   '***',        '违规', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(7,  '内部资料',     'literal',    NULL,                                                                                                          'medium', '[内部资料]', '保密', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(8,  '客户名单',     'literal',    NULL,                                                                                                          'medium', '[客户名单]', '保密', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(9,  '账号密码',     'credential', NULL,                                                                                                          'medium', '[凭证]',     '隐私', true, '["账号 admin 密码 admin123","admin/admin123","password=admin123"]',          '["文档涉及账号密码字样"]',                                        NOW(3), NOW(3)),
+(10, '转账',         'literal',    NULL,                                                                                                          'medium', '***',        '金融', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(11, '推广',         'literal',    NULL,                                                                                                          'low',    '***',        '营销', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(12, '广告',         'literal',    NULL,                                                                                                          'low',    '***',        '营销', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(13, '测试敏感词',   'literal',    NULL,                                                                                                          'low',    '***',        '测试', true, NULL,                                                                          NULL,                                                              NOW(3), NOW(3)),
+(14, '弱密码',       'regex',      '(?i)(?:password|passwd|pwd|pass)\\s*[:=]\\s*(?:123456|admin|admin123|root|root123|password|qwerty)',         'high',   '[弱密码]',   '隐私', true, '["password=123456","pwd: admin"]',                                            '["请勿使用弱密码"]',                                              NOW(3), NOW(3));
 
 -- 5.6 注入演示内容 (4 篇，覆盖各类状态与预置检测结果)
 INSERT INTO `contents` (`id`, `title`, `body`, `filtered_body`, `category`, `status`, `risk_level`, `risk_score`, `detection_result`, `is_pinned`, `author_id`, `created_at`, `updated_at`) VALUES

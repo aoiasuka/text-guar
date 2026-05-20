@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { PrismaClient, PermType, SensitiveMatchType, type Role } from '@prisma/client';
+import { PrismaClient, PermType, SensitiveMatchType, SensitiveContextScope, type Role } from '@prisma/client';
 import { detector } from '../src/engine/detector.js';
 
 const prisma = new PrismaClient();
@@ -48,6 +48,9 @@ const permissions: PermissionSeed[] = [
   { code: 'content:data:own', name: '内容数据-仅自己', module: 'content', type: PermType.data },
   { code: 'log:data:any', name: '日志数据-全部', module: 'log', type: PermType.data },
   { code: 'log:data:own', name: '日志数据-仅自己', module: 'log', type: PermType.data },
+
+  { code: 'sensitive:event:view', name: '查看规则命中审计', module: 'sensitive', type: PermType.action },
+  { code: 'sensitive:test', name: '测试敏感词规则', module: 'sensitive', type: PermType.action },
 ];
 
 const editorPermissions = new Set([
@@ -87,18 +90,54 @@ interface SensitiveSeed {
   riskLevel: 'low' | 'medium' | 'high';
   replacement: string;
   category: string;
+  baseConfidence?: number;
+  contextScope?: SensitiveContextScope;
+  positiveSamples?: string[];
+  negativeSamples?: string[];
 }
 
 const sensitiveWords: SensitiveSeed[] = [
-  { word: '泄密', matchType: SensitiveMatchType.literal, riskLevel: 'high', replacement: '[保密信息]', category: '安全' },
-  { word: '攻击', matchType: SensitiveMatchType.literal, riskLevel: 'high', replacement: '***', category: '安全' },
+  {
+    word: '泄密',
+    matchType: SensitiveMatchType.literal,
+    riskLevel: 'high',
+    replacement: '[保密信息]',
+    category: '安全',
+    positiveSamples: ['公司机密被泄密', '他向竞争对手泄密'],
+    negativeSamples: ['保密协议'],
+  },
+  {
+    word: '攻击',
+    matchType: SensitiveMatchType.literal,
+    riskLevel: 'high',
+    replacement: '***',
+    category: '安全',
+    positiveSamples: ['黑客攻击系统', '发起网络攻击'],
+    negativeSamples: ['攻击力很强', '攻克难题'],
+  },
   { word: '暴力', matchType: SensitiveMatchType.literal, riskLevel: 'high', replacement: '***', category: '违规' },
   { word: '诈骗', matchType: SensitiveMatchType.literal, riskLevel: 'high', replacement: '***', category: '违规' },
-  { word: '赌博', matchType: SensitiveMatchType.literal, riskLevel: 'high', replacement: '***', category: '违规' },
+  {
+    word: '赌博',
+    matchType: SensitiveMatchType.literal,
+    riskLevel: 'high',
+    replacement: '***',
+    category: '违规',
+    positiveSamples: ['他在赌博', '组织赌博'],
+    negativeSamples: ['赌一把', '赌徒心态'],
+  },
   { word: '违法', matchType: SensitiveMatchType.literal, riskLevel: 'high', replacement: '***', category: '违规' },
   { word: '内部资料', matchType: SensitiveMatchType.literal, riskLevel: 'medium', replacement: '[内部资料]', category: '保密' },
   { word: '客户名单', matchType: SensitiveMatchType.literal, riskLevel: 'medium', replacement: '[客户名单]', category: '保密' },
-  { word: '账号密码', matchType: SensitiveMatchType.credential, riskLevel: 'medium', replacement: '[凭证]', category: '隐私' },
+  {
+    word: '账号密码',
+    matchType: SensitiveMatchType.credential,
+    riskLevel: 'medium',
+    replacement: '[凭证]',
+    category: '隐私',
+    positiveSamples: ['账号 admin 密码 admin123', 'admin/admin123', 'password=admin123'],
+    negativeSamples: ['文档涉及账号密码字样'],
+  },
   { word: '转账', matchType: SensitiveMatchType.literal, riskLevel: 'medium', replacement: '***', category: '金融' },
   { word: '推广', matchType: SensitiveMatchType.literal, riskLevel: 'low', replacement: '***', category: '营销' },
   { word: '广告', matchType: SensitiveMatchType.literal, riskLevel: 'low', replacement: '***', category: '营销' },
@@ -110,6 +149,8 @@ const sensitiveWords: SensitiveSeed[] = [
     riskLevel: 'high',
     replacement: '[弱密码]',
     category: '隐私',
+    positiveSamples: ['password=123456', 'pwd: admin'],
+    negativeSamples: ['请勿使用弱密码'],
   },
 ];
 
@@ -197,6 +238,10 @@ async function main() {
         replacement: item.replacement,
         category: item.category,
         enabled: true,
+        baseConfidence: item.baseConfidence ?? 1.0,
+        contextScope: item.contextScope ?? SensitiveContextScope.strict,
+        positiveSamples: item.positiveSamples ? JSON.stringify(item.positiveSamples) : null,
+        negativeSamples: item.negativeSamples ? JSON.stringify(item.negativeSamples) : null,
       },
       create: {
         word: item.word,
@@ -206,6 +251,10 @@ async function main() {
         replacement: item.replacement,
         category: item.category,
         enabled: true,
+        baseConfidence: item.baseConfidence ?? 1.0,
+        contextScope: item.contextScope ?? SensitiveContextScope.strict,
+        positiveSamples: item.positiveSamples ? JSON.stringify(item.positiveSamples) : null,
+        negativeSamples: item.negativeSamples ? JSON.stringify(item.negativeSamples) : null,
       },
     });
   }
@@ -219,6 +268,9 @@ async function main() {
       riskLevel: item.riskLevel,
       replacement: item.replacement,
       category: item.category,
+      baseConfidence: item.baseConfidence,
+      variantMatch: item.variantMatch,
+      contextScope: item.contextScope,
     })),
   );
 

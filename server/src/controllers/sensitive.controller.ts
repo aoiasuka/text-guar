@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { SensitiveMatchType } from '@prisma/client';
+import { SensitiveContextScope, SensitiveMatchType } from '@prisma/client';
 import { z } from 'zod';
 import {
   batchCreateSensitiveWords,
@@ -7,13 +7,18 @@ import {
   batchUpdateEnabled,
   createSensitiveWord,
   deleteSensitiveWord,
+  getSensitiveWord,
   listSensitiveWords,
+  testSensitiveWord,
   updateSensitiveWord,
 } from '../services/sensitive.service.js';
+import { listEventsByWord } from '../services/detection-event.service.js';
+import { validateUserPattern } from '../engine/regex-safe.js';
 import { writeLog } from '../services/log.service.js';
 import { ok } from '../utils/response.js';
 
 const matchTypeEnum = z.nativeEnum(SensitiveMatchType);
+const contextScopeEnum = z.nativeEnum(SensitiveContextScope);
 
 export const sensitiveQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
@@ -32,6 +37,11 @@ export const sensitiveSchema = z
     riskLevel: z.enum(['low', 'medium', 'high']),
     replacement: z.string().max(100).default('***'),
     category: z.string().max(50).default('默认'),
+    baseConfidence: z.number().min(0).max(1).default(1.0),
+    variantMatch: z.boolean().default(true),
+    contextScope: contextScopeEnum.default(SensitiveContextScope.strict),
+    positiveSamples: z.array(z.string().max(500)).max(50).optional(),
+    negativeSamples: z.array(z.string().max(500)).max(50).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.matchType === SensitiveMatchType.regex) {
@@ -43,14 +53,13 @@ export const sensitiveSchema = z
         });
         return;
       }
-      try {
-        const body = data.pattern.replace(/^\(\?[imsu]+\)/, '');
-        new RegExp(body);
-      } catch (error) {
+      // 用 re2-wasm 安全编译预检（避免 ReDoS）
+      const r = validateUserPattern(data.pattern);
+      if (!r.ok) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['pattern'],
-          message: `正则不合法：${error instanceof Error ? error.message : '未知错误'}`,
+          message: r.reason,
         });
       }
     }
@@ -62,6 +71,10 @@ export const batchIdsSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(500),
 });
 export const batchToggleSchema = batchIdsSchema.extend({ enabled: z.boolean() });
+export const eventsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(20),
+});
 
 export async function listController(req: Request, res: Response) {
   return ok(res, await listSensitiveWords(req.query as never));
@@ -94,6 +107,14 @@ export async function batchController(req: Request, res: Response) {
 
 export async function updateController(req: Request, res: Response) {
   const item = await updateSensitiveWord(Number(req.params.id), req.body);
+  writeLog({
+    userId: req.user!.id,
+    action: 'update_sensitive_word',
+    targetType: 'sensitive_word',
+    targetId: item.id,
+    detail: { word: item.word, version: item.version },
+    ip: req.ip,
+  });
   return ok(res, item);
 }
 
@@ -134,6 +155,30 @@ export async function batchDeleteController(req: Request, res: Response) {
     action: 'batch_delete_sensitive_word',
     targetType: 'sensitive_word',
     detail: { count: result.count, ids: req.body.ids },
+    ip: req.ip,
+  });
+  return ok(res, result);
+}
+
+export async function detailController(req: Request, res: Response) {
+  return ok(res, await getSensitiveWord(Number(req.params.id)));
+}
+
+export async function eventsController(req: Request, res: Response) {
+  const id = Number(req.params.id);
+  const query = req.query as unknown as { page: number; pageSize: number };
+  return ok(res, await listEventsByWord(id, query.page, query.pageSize));
+}
+
+export async function testController(req: Request, res: Response) {
+  const id = Number(req.params.id);
+  const result = await testSensitiveWord(id);
+  writeLog({
+    userId: req.user!.id,
+    action: 'test_sensitive_word',
+    targetType: 'sensitive_word',
+    targetId: id,
+    detail: { passed: result.passed.length, failed: result.failed.length },
     ip: req.ip,
   });
   return ok(res, result);

@@ -1,11 +1,45 @@
-import { Alert, Empty, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Empty, Progress, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { useMemo } from 'react';
 import type { DetectionMatch, DetectionResult, RiskLevel } from '@text-guard/shared';
 import { RiskTag } from './RiskTag.js';
 
 const riskOrder: Record<RiskLevel, number> = { high: 0, medium: 1, low: 2 };
-const typeLabel: Record<string, string> = { word: '敏感词', regex: '正则规则' };
-const typeTone: Record<string, string> = { word: 'volcano', regex: 'geekblue' };
+
+const sourceTone: Record<string, string> = {
+  literal: 'volcano',
+  literal_variant: 'orange',
+  regex: 'geekblue',
+  credential: 'magenta',
+  llm: 'purple',
+};
+
+const sourceLabel: Record<string, string> = {
+  literal: '字面',
+  literal_variant: '变体',
+  regex: '正则',
+  credential: '凭证',
+  llm: 'AI',
+};
+
+const verdictLabel: Record<string, string> = {
+  sensitive: '确认敏感',
+  neutral: '中性',
+  quote: '引用',
+  reverse: '反向',
+};
+
+const verdictTone: Record<string, string> = {
+  sensitive: 'red',
+  neutral: 'default',
+  quote: 'blue',
+  reverse: 'green',
+};
+
+function confidenceTone(confidence: number): string {
+  if (confidence >= 0.85) return '#52c41a';
+  if (confidence >= 0.5) return '#faad14';
+  return '#d9d9d9';
+}
 
 export function DetectResult({ result }: { result?: DetectionResult }) {
   const sortedMatches = useMemo<DetectionMatch[]>(() => {
@@ -38,16 +72,49 @@ export function DetectResult({ result }: { result?: DetectionResult }) {
         columns={[
           { title: '命中项', dataIndex: 'word', render: (value: string) => <code>{value}</code> },
           {
-            title: '类型',
-            dataIndex: 'type',
-            width: 110,
-            render: (value: string) => <Tag color={typeTone[value] || 'default'}>{typeLabel[value] || value}</Tag>,
+            title: '来源',
+            dataIndex: 'source',
+            width: 90,
+            render: (value: string = 'literal') => (
+              <Tag color={sourceTone[value] || 'default'}>{sourceLabel[value] || value}</Tag>
+            ),
           },
-          { title: '分类', dataIndex: 'category', width: 110 },
-          { title: '风险', dataIndex: 'riskLevel', width: 110, render: (value) => <RiskTag level={value} /> },
+          {
+            title: '置信度',
+            dataIndex: 'confidence',
+            width: 130,
+            render: (value: number | undefined, row) => {
+              const c = value ?? 1;
+              return (
+                <Tooltip title={row.reason || `${Math.round(c * 100)}%`}>
+                  <Progress
+                    percent={Math.round(c * 100)}
+                    size="small"
+                    strokeColor={confidenceTone(c)}
+                    format={(percent) => `${percent}%`}
+                  />
+                </Tooltip>
+              );
+            },
+          },
+          {
+            title: 'AI 复核',
+            dataIndex: 'judgeVerdict',
+            width: 110,
+            render: (value: string | undefined, row) =>
+              value ? (
+                <Tooltip title={row.reason}>
+                  <Tag color={verdictTone[value]}>{verdictLabel[value] || value}</Tag>
+                </Tooltip>
+              ) : (
+                <Typography.Text type="secondary">—</Typography.Text>
+              ),
+          },
+          { title: '分类', dataIndex: 'category', width: 100 },
+          { title: '风险', dataIndex: 'riskLevel', width: 90, render: (value) => <RiskTag level={value} /> },
           {
             title: '位置',
-            width: 110,
+            width: 90,
             render: (_, row) => (
               <Typography.Text type="secondary">
                 [{row.start}, {row.end})

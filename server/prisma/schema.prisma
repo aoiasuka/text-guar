@@ -69,21 +69,57 @@ enum SensitiveMatchType {
   credential
 }
 
+enum SensitiveContextScope {
+  strict
+  lenient
+  global
+}
+
 model SensitiveWord {
-  id          Int                @id @default(autoincrement())
-  word        String             @unique @db.VarChar(200)
-  matchType   SensitiveMatchType @default(literal) @map("match_type")
-  pattern     String?            @db.VarChar(500)
-  riskLevel   RiskLevel          @map("risk_level")
-  replacement String             @default("***") @db.VarChar(100)
-  category    String             @default("") @db.VarChar(50)
-  enabled     Boolean            @default(true)
-  createdAt   DateTime           @default(now()) @map("created_at")
+  id              Int                   @id @default(autoincrement())
+  word            String                @unique @db.VarChar(200)
+  matchType       SensitiveMatchType    @default(literal) @map("match_type")
+  pattern         String?               @db.VarChar(500)
+  riskLevel       RiskLevel             @map("risk_level")
+  replacement     String                @default("***") @db.VarChar(100)
+  category        String                @default("") @db.VarChar(50)
+  enabled         Boolean               @default(true)
+  version         Int                   @default(1)
+  baseConfidence  Float                 @default(1.0) @map("base_confidence")
+  variantMatch    Boolean               @default(true) @map("variant_match")
+  contextScope    SensitiveContextScope @default(strict) @map("context_scope")
+  positiveSamples String?               @db.Text @map("positive_samples")
+  negativeSamples String?               @db.Text @map("negative_samples")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  events          DetectionEvent[]
 
   @@index([enabled])
   @@index([enabled, riskLevel])
   @@index([enabled, matchType])
   @@map("sensitive_words")
+}
+
+model DetectionEvent {
+  id           Int            @id @default(autoincrement())
+  contentId    Int?           @map("content_id")
+  wordId       Int?           @map("word_id")
+  word         SensitiveWord? @relation(fields: [wordId], references: [id], onDelete: SetNull)
+  wordVersion  Int?           @map("word_version")
+  ruleSource   String         @map("rule_source") @db.VarChar(40)
+  hitText      String         @map("hit_text") @db.VarChar(500)
+  start        Int
+  end          Int
+  riskLevel    RiskLevel      @map("risk_level")
+  confidence   Float
+  judgeVerdict String?        @map("judge_verdict") @db.VarChar(40)
+  reason       String?        @db.VarChar(200)
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  @@index([contentId])
+  @@index([wordId, createdAt])
+  @@index([createdAt])
+  @@map("detection_events")
 }
 
 model Review {

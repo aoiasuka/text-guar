@@ -1,6 +1,7 @@
 import type { ContentStatus, DetectionResult, RiskLevel, Role } from '@text-guard/shared';
 
 export type SensitiveMatchType = 'literal' | 'regex' | 'credential';
+export type SensitiveContextScope = 'strict' | 'lenient' | 'global';
 
 export interface User {
   id: number;
@@ -50,7 +51,35 @@ export interface SensitiveWord {
   replacement: string;
   category: string;
   enabled: boolean;
+  version: number;
+  baseConfidence: number;
+  variantMatch: boolean;
+  contextScope: SensitiveContextScope;
+  positiveSamples?: string | null;
+  negativeSamples?: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface DetectionEvent {
+  id: number;
+  contentId: number | null;
+  wordId: number | null;
+  wordVersion: number | null;
+  ruleSource: string;
+  hitText: string;
+  start: number;
+  end: number;
+  riskLevel: RiskLevel;
+  confidence: number;
+  judgeVerdict: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface RuleTestResult {
+  passed: Array<{ sample: string; matched: boolean }>;
+  failed: Array<{ sample: string; matched: boolean; expected: boolean }>;
 }
 
 export interface OperationLog {

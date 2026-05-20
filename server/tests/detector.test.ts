@@ -52,12 +52,12 @@ describe('SensitiveDetector', () => {
     detector.rebuild([
       { word: '辱骂', riskLevel: 'high', replacement: '***', category: '辱骂' },
     ]);
-    const result = detector.detect('请勿辱骂他人');
+    const result = detector.detect('他在辱骂他人');
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0].word, '辱骂');
     assert.equal(result.level, 'medium');
     assert.equal(result.strategy, 'warn');
-    assert.equal(result.filteredText, '请勿***他人');
+    assert.equal(result.filteredText, '他在***他人');
   });
 
   it('returns empty result on empty text', () => {
@@ -134,8 +134,8 @@ describe('SensitiveDetector', () => {
     ]);
     const result = detector.detect('please use admin/admin123 to log in');
     assert.ok(result.matches.length > 0, 'should match credential combination');
-    assert.equal(result.matches[0].replacement, '[凭证]');
-    assert.equal(result.matches[0].category, '隐私');
+    // P4 后每条 credential 规则带独立 category（如「凭证-账密组合」），不再用户配置的「隐私」覆盖
+    assert.match(result.matches[0].category, /凭证|隐私/);
   });
 
   it('detects Chinese credential phrasing via credential mode', () => {

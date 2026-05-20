@@ -11,6 +11,8 @@ import {
   updateContent,
 } from '../services/content.service.js';
 import { writeLog } from '../services/log.service.js';
+import { writeEvents } from '../services/detection-event.service.js';
+import { loadWordIndex } from '../services/sensitive.service.js';
 import { ok } from '../utils/response.js';
 
 export const pageQuerySchema = z.object({
@@ -90,6 +92,9 @@ export async function submitController(req: Request, res: Response) {
     detail: result.detection,
     ip: req.ip,
   });
+  // 异步把命中事件写入审计表
+  const wordIndex = await loadWordIndex().catch(() => undefined);
+  writeEvents({ matches: result.detection.matches, contentId: id, wordIndex });
   return ok(res, result);
 }
 
@@ -99,5 +104,8 @@ export async function pinController(req: Request, res: Response) {
 }
 
 export async function detectController(req: Request, res: Response) {
-  return ok(res, await detectText(req.body.text));
+  const detection = await detectText(req.body.text);
+  const wordIndex = await loadWordIndex().catch(() => undefined);
+  writeEvents({ matches: detection.matches, contentId: null, wordIndex });
+  return ok(res, detection);
 }

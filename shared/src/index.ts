@@ -19,6 +19,10 @@ export interface DetectionMatch {
   replacement: string;
   start: number;
   end: number;
+  source?: 'literal' | 'literal_variant' | 'regex' | 'credential' | 'llm';
+  confidence?: number;
+  reason?: string;
+  judgeVerdict?: 'sensitive' | 'neutral' | 'quote' | 'reverse';
 }
 
 export interface DetectionResult {

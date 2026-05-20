@@ -13,6 +13,13 @@ const tone: Record<RiskLevel, { background: string; color: string; border: strin
   high: { background: '#fff1f0', color: '#cf1322', border: '#ffa39e' },
 };
 
+// 按置信度返回高亮样式调整：低置信度淡化为虚线框
+function confidenceStyle(confidence: number) {
+  if (confidence >= 0.85) return { opacity: 1, borderStyle: 'solid' as const };
+  if (confidence >= 0.5) return { opacity: 0.85, borderStyle: 'solid' as const };
+  return { opacity: 0.6, borderStyle: 'dashed' as const };
+}
+
 export function HighlightedText({ text, matches, className }: HighlightedTextProps) {
   const segments = useMemo(() => {
     if (!matches || matches.length === 0) {
@@ -35,20 +42,35 @@ export function HighlightedText({ text, matches, className }: HighlightedTextPro
     <pre className={className}>
       {segments.map((segment, index) =>
         segment.match ? (
-          <mark
-            key={index}
-            title={`${segment.match.category} · ${segment.match.riskLevel}`}
-            style={{
-              padding: '0 4px',
-              margin: '0 1px',
-              borderRadius: 3,
-              border: `1px solid ${tone[segment.match.riskLevel].border}`,
-              background: tone[segment.match.riskLevel].background,
-              color: tone[segment.match.riskLevel].color,
-            }}
-          >
-            {segment.text}
-          </mark>
+          (() => {
+            const confidence = segment.match.confidence ?? 1;
+            const cs = confidenceStyle(confidence);
+            const title = [
+              `${segment.match.category} · ${segment.match.riskLevel}`,
+              `置信度 ${Math.round(confidence * 100)}%`,
+              segment.match.reason ? `原因：${segment.match.reason}` : '',
+              segment.match.judgeVerdict ? `AI：${segment.match.judgeVerdict}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <mark
+                key={index}
+                title={title}
+                style={{
+                  padding: '0 4px',
+                  margin: '0 1px',
+                  borderRadius: 3,
+                  border: `1px ${cs.borderStyle} ${tone[segment.match.riskLevel].border}`,
+                  background: tone[segment.match.riskLevel].background,
+                  color: tone[segment.match.riskLevel].color,
+                  opacity: cs.opacity,
+                }}
+              >
+                {segment.text}
+              </mark>
+            );
+          })()
         ) : (
           <span key={index}>{segment.text}</span>
         ),

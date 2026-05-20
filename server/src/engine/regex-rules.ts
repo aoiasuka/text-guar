@@ -136,6 +136,8 @@ export function scanByRegex(text: string): DetectionMatch[] {
         replacement: rule.replacement,
         start,
         end: start + raw.length,
+        source: 'regex',
+        confidence: 0.95,
       });
     }
   }

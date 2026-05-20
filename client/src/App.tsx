@@ -10,6 +10,7 @@ import { ContentListPage } from '@/pages/Content/ContentListPage.js';
 import { ContentFormPage } from '@/pages/Content/ContentFormPage.js';
 import { ContentDetailPage } from '@/pages/Content/ContentDetailPage.js';
 import { SensitiveWordsPage } from '@/pages/SensitiveWords/SensitiveWordsPage.js';
+import { SensitiveWordEventsPage } from '@/pages/SensitiveWords/SensitiveWordEventsPage.js';
 import { ReviewListPage } from '@/pages/Review/ReviewListPage.js';
 import { ReviewDetailPage } from '@/pages/Review/ReviewDetailPage.js';
 import { ReportsPage } from '@/pages/Reports/ReportsPage.js';
@@ -40,6 +41,10 @@ export default function App() {
 
               <Route element={<RequirePermission code="sensitive:list" />}>
                 <Route path="/sensitive-words" element={<SensitiveWordsPage />} />
+              </Route>
+
+              <Route element={<RequirePermission code="sensitive:event:view" />}>
+                <Route path="/sensitive-words/:id/events" element={<SensitiveWordEventsPage />} />
               </Route>
 
               <Route element={<RequirePermission code="review:pending" />}>

@@ -3,7 +3,12 @@
 全栈 TypeScript 项目，覆盖内容采集、敏感信息检测、审核流转、数据权限与报表导出，提供：
 
 - **RBAC 权限模型**：功能权限（菜单/按钮/接口）与数据权限（owner 范围）分离，菜单按角色动态加载
-- **敏感词三种匹配模式**：字面（literal）、自定义正则（regex）、内置凭证识别（credential，可命中 `admin/admin123`、`password=xxx`、「账号 xxx 密码 yyy」等组合）
+- **成熟敏感词检测引擎**：
+  - **反绕过归一化**：拼音（`dǔbó` → 赌博）、leet（`adm!n` → admin）、形近字（攴击 → 攻击）、间隔符号（赌·博 / 赌@博 / 零宽字符）统一识别
+  - **三种匹配模式**：字面（literal）、自定义正则（regex，re2-wasm 编译杜绝 ReDoS）、内置凭证识别（credential，覆盖 AWS Key、JWT、SSH 私钥、API token、数据库连接串、bcrypt hash、中英文账密组合等 15+ 模板）
+  - **上下文消歧**：用 jieba 分词识别复合词（攻击力 ≠ 攻击）、检测引号/代码块/反向劝阻关键词，给命中打 0-1 置信度而非二元命中
+  - **规则治理**：每条规则带 version / baseConfidence / 正负样本，改一条规则可一键回归；命中事件全量入 `detection_events` 表，可按规则回溯
+  - **本地 AI 复核**（可选）：对中等置信度命中调本地 Gemma 3 4B 二次判定，区分「确实敏感 / 中性提及 / 引用 / 反向劝阻」
 - **审核流**：编辑提审 → 管理员通过/驳回，附操作审计日志
 - **报表导出**：Word（关键指标 + 高风险列表）、Excel（全量明细）
 
@@ -13,7 +18,8 @@
 |----|----|
 | 前端 | React 18、Vite、Ant Design 5、React Router、Zustand、Axios |
 | 后端 | Node.js ≥18、Express、TypeScript、Prisma 5、MySQL 8、JWT、Zod |
-| 检测引擎 | Aho-Corasick Trie（字面）+ 自定义正则桶 + 内置凭证规则 + 风险评分 |
+| 检测引擎 | Aho-Corasick Trie + pinyin-pro 拼音/leet/形近变体 + @node-rs/jieba 分词 + re2-wasm 安全正则 + 内置凭证规则 + 置信度评分 |
+| AI 复核 | Ollama + Gemma 3 4B（可选，完全本地推理） |
 | 报表 | `docx`（Word）、`exceljs`（Excel） |
 
 ## 环境要求
@@ -111,15 +117,48 @@ npx prisma generate
 
 ## 敏感词匹配模式
 
-在「敏感词库」页新增条目时可选三种 `matchType`：
+在「敏感词库」页新增条目时可选三种 `matchType`，并搭配 `baseConfidence / variantMatch / contextScope / positiveSamples / negativeSamples` 字段精细控制：
 
 | 模式 | 适用场景 | 示例 |
 |------|----------|------|
-| `literal` | 普通敏感词，按字面命中 | 词条「赌博」→ 命中文本中的「赌博」二字 |
-| `regex` | 用户自定义正则；支持前置 `(?i)/(?s)` 等内联 flag | 词条「弱密码」+ pattern `(?i)password\s*[:=]\s*(?:admin|123456)` |
-| `credential` | 凭证组合识别，**忽略词条文本**，使用内置规则集 | 任何 credential 词条都会让 `admin/admin123`、`password=xxx`、「账号 admin 密码 admin123」之类被命中 |
+| `literal` | 普通敏感词，按字面命中（自动启用反绕过变体匹配） | 词条「赌博」→ 同时命中「dǔbó / DU博 / 赌@博 / 赌​博」 |
+| `regex` | 用户自定义正则；用 re2-wasm 编译避免 ReDoS；支持前置 `(?i)/(?s)` 等内联 flag | 词条「弱密码」+ pattern `(?i)password\s*[:=]\s*(?:admin|123456)` |
+| `credential` | 凭证组合识别，**忽略词条文本**，使用 15+ 条内置规则集 | 启用后命中 AWS Key、JWT、SSH 私钥、Bearer Token、bcrypt hash、`mysql://user:pass@host`、「账号 admin 密码 admin123」等 |
 
-内置凭证正则在 `server/src/engine/credential-rules.ts`，按需扩展。
+每条规则配置：
+- **baseConfidence** (0-1)：规则上限置信度，最终命中置信度 = 该值 × 来源折扣 × 上下文调整
+- **variantMatch**：是否启用拼音/leet/形近字反绕过匹配（命中变体时置信度 × 0.75）
+- **contextScope**：
+  - `strict`（默认）：应用全部上下文规则（引号 ×0.5、代码块 ×0.3、反向劝阻 ×0.4、jieba 复合词 ×0.5、同类聚类 ×1.1）
+  - `lenient`：只判定引号 + 代码块
+  - `global`：完全跳过上下文调整
+- **positiveSamples / negativeSamples**：用于点击「测试」按钮一键回归
+
+命中事件自动入 `detection_events` 表，进规则详情可查全部历史。
+
+## 启用本地 AI 复核（可选）
+
+对中等置信度命中（0.5–0.85）调本地 Gemma 3 4B 二次判定，输出 `sensitive / neutral / quote / reverse`，前端紫色「AI 复核」角标显示。完全离线、零调用成本。
+
+```pwsh
+# 1. 安装 Ollama
+# https://ollama.com/download
+
+# 2. 拉取模型（首次约 3.3GB / 显存约 5-6GB）
+ollama pull gemma3:4b
+
+# 3. 在 server/.env 设
+#   LLM_JUDGE_ENABLED=true
+#   OLLAMA_HOST=http://localhost:11434
+#   LLM_JUDGE_MODEL=gemma3:4b
+#   LLM_JUDGE_MAX_PER_DETECTION=3
+#   LLM_JUDGE_TIMEOUT_MS=5000
+
+# 4. 重启后端
+npm run dev:server
+```
+
+若 Ollama 不可达，judge 自动 fallback 为「保守不放过」，主流程不挂；前端仍显示规则命中，仅少 AI 角标。中文判定不理想时把 `LLM_JUDGE_MODEL` 切到 `qwen2.5:3b` 即可。
 
 ## 目录结构
 

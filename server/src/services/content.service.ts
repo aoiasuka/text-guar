@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ContentStatus, RiskLevel } from '@text-guard/shared';
-import { detector } from '../engine/detector.js';
+import { detector, detectWithLLM } from '../engine/detector.js';
 import { prisma } from '../utils/prisma.js';
 import { HttpError } from '../utils/errors.js';
 import { invalidateStatsCache } from './report.service.js';
@@ -95,7 +95,8 @@ export async function getContent(id: number, scope?: ContentScope) {
 }
 
 export async function detectText(text: string) {
-  return detector.detect(text);
+  // /detect 端点走 LLM 增强（如启用），让前端实时检测面板能看到 AI 复核结果
+  return detectWithLLM(text);
 }
 
 export async function createContent(input: {
