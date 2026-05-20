@@ -90,16 +90,17 @@ describe('LLM 兜底 · Ollama HTTP API', () => {
     assert.equal(out[0].judgeVerdict, 'sensitive');
   });
 
-  it('Ollama 不可达时 fallback verdict=sensitive，confidence ≥0.9', async () => {
+  it('Ollama 不可达时不改写命中（保留规则原始置信度，仅在 reason 标记失败）', async () => {
     process.env.LLM_JUDGE_ENABLED = 'true';
     globalThis.fetch = (async () => {
       throw new Error('ECONNREFUSED');
     }) as typeof fetch;
 
     const out = await judgeUnsure([mkMatch(0.6)], '他在赌博');
-    assert.ok((out[0].confidence ?? 0) >= 0.9, '判定失败时保守拉高');
-    assert.equal(out[0].judgeVerdict, 'sensitive');
-    assert.match(out[0].reason ?? '', /judge_unavailable/);
+    assert.equal(out[0].confidence, 0.6, '失败时不应改写置信度');
+    assert.equal(out[0].judgeVerdict, undefined, '失败时不应设 judgeVerdict');
+    assert.equal(out[0].originalConfidence, undefined, '失败时不应记 originalConfidence');
+    assert.match(out[0].reason ?? '', /judge_failed.*ECONNREFUSED/);
   });
 
   it('confidence >= 0.85 的高置信度命中不触发 LLM', async () => {

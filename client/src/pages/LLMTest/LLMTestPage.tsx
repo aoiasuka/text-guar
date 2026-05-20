@@ -223,8 +223,10 @@ export function LLMTestPage() {
             title: 'verdict',
             dataIndex: 'verdict',
             width: 100,
-            render: (v: string | undefined) =>
-              v ? <Tag color={verdictTone[v]}>{verdictLabel[v] || v}</Tag> : '—',
+            render: (v: string | undefined, row) => {
+              if (!row.ok) return <Tag color="default">未判定</Tag>;
+              return v ? <Tag color={verdictTone[v]}>{verdictLabel[v] || v}</Tag> : '—';
+            },
           },
           {
             title: '耗时',

@@ -14,6 +14,8 @@ export type Verdict = 'sensitive' | 'neutral' | 'quote' | 'reverse';
 export interface JudgeResult {
   verdict: Verdict;
   reason: string;
+  /** 是否为 fallback（网络/超时/解析失败时为 true）。failed 时不应改写 confidence。 */
+  failed?: boolean;
 }
 
 interface JudgeOptions {
@@ -54,7 +56,7 @@ export function withTraceCollection<T>(fn: () => Promise<T>): Promise<{ value: T
 const LLM_ENABLED = () => process.env.LLM_JUDGE_ENABLED === 'true';
 const OLLAMA_HOST = () => process.env.OLLAMA_HOST || 'http://localhost:11434';
 const MODEL = () => process.env.LLM_JUDGE_MODEL || 'gemma4:e2b';
-const TIMEOUT_MS = () => Number(process.env.LLM_JUDGE_TIMEOUT_MS || 5000);
+const TIMEOUT_MS = () => Number(process.env.LLM_JUDGE_TIMEOUT_MS || 30000);
 const MAX_PER_DETECTION = () => Number(process.env.LLM_JUDGE_MAX_PER_DETECTION || 3);
 const CONTEXT_WINDOW = 80;
 
@@ -278,7 +280,8 @@ function parseVerdict(raw: string): JudgeResult | null {
 }
 
 function fallback(why: string): JudgeResult {
-  return { verdict: 'sensitive', reason: `judge_unavailable(${why})` };
+  // verdict 字段仅为类型兼容；judgeUnsure 检测到 failed=true 时会跳过任何 confidence 改写
+  return { verdict: 'sensitive', reason: `judge_unavailable(${why})`, failed: true };
 }
 
 export async function judgeUnsure(matches: DetectionMatch[], text: string): Promise<DetectionMatch[]> {
@@ -318,6 +321,16 @@ export async function judgeUnsure(matches: DetectionMatch[], text: string): Prom
   for (const { i, r } of verdicts) {
     const m = next[i];
     const oldConf = m.confidence ?? 1;
+
+    // 失败 / 超时 / 解析错：不改写置信度，仅在 reason 标记本次判定未生效，让规则原始结论保持
+    if (r.failed) {
+      next[i] = {
+        ...m,
+        reason: m.reason ? `${m.reason} / judge_failed(${r.reason})` : `judge_failed(${r.reason})`,
+      };
+      continue;
+    }
+
     let newConf = oldConf;
     if (r.verdict === 'sensitive') {
       newConf = Math.max(oldConf, 0.9);
